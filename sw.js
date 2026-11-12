@@ -1,5 +1,5 @@
 // Stale-while-revalidate: open instantly from cache, refresh in the background.
-const CACHE = 'parsnip-v1';
+const CACHE = 'parsnip-v2';
 const SHELL = [
   './', 'index.html', 'style.css', 'app.js', 'icons.js', 'manifest.webmanifest',
   'img/icon-192.png', 'img/icon-512.png', 'img/apple-touch-icon.png',
@@ -32,4 +32,26 @@ self.addEventListener('fetch', (e) => {
       return cached || fresh;
     })
   );
+});
+
+// ----- Daily nudge -----
+self.addEventListener('push', (e) => {
+  let data = {};
+  try { data = e.data ? e.data.json() : {}; } catch {}
+  e.waitUntil(self.registration.showNotification(data.title || 'Parsnip?', {
+    body: data.body || '',
+    icon: 'img/icon-192.png',
+    badge: 'img/icon-192.png',
+    tag: 'parsnip-daily',
+    data: { url: './?from=nudge' },
+  }));
+});
+
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  e.waitUntil((async () => {
+    const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const w of wins) if ('focus' in w) return w.focus();
+    return self.clients.openWindow(e.notification.data?.url || './');
+  })());
 });

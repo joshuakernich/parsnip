@@ -379,8 +379,77 @@ document.getElementById('vars-link').href = `https://github.com/${REPO}/settings
 const soundEl = document.getElementById('sound');
 soundEl.addEventListener('change', () => { state.sound = soundEl.checked; saveState(); });
 
+// ---------- Push notifications ----------
+// The daily "Parsnip?" is sent by a GitHub Action using this device's push
+// subscription, stored in the repo's PUSH_SUBSCRIPTION secret.
+const VAPID_PUBLIC_KEY = 'BN2swssT80HTByvveACzavE2gUHm9IIViIsLDeY_P2avgEhblqAv5ufg-YrgfNkWvP9992C0uAQMCHxDOSp9Y4U';
+const pushStatus = document.getElementById('push-status');
+const pushEnable = document.getElementById('push-enable');
+const pushLink = document.getElementById('push-link');
+const pushCode = document.getElementById('push-code');
+document.getElementById('push-secret').href = `https://github.com/${REPO}/settings/secrets/actions`;
+
+const b64urlToBytes = (s) => {
+  const b = atob(s.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (s.length % 4)) % 4));
+  return Uint8Array.from(b, (c) => c.charCodeAt(0));
+};
+
+async function refreshPush() {
+  pushEnable.hidden = true;
+  pushLink.hidden = true;
+  const supported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  if (!supported) {
+    pushStatus.textContent = /iPhone|iPad/.test(navigator.userAgent) && !standalone
+      ? 'Add Parsnip to your Home Screen (Share → Add to Home Screen), open it from there, then turn on notifications.'
+      : "This browser can't receive push notifications.";
+    return;
+  }
+  if (Notification.permission === 'denied') {
+    pushStatus.textContent = 'Notifications are blocked. Allow them in Settings → Notifications → Parsnip.';
+    return;
+  }
+  let sub = null;
+  try {
+    const reg = await navigator.serviceWorker.getRegistration();
+    if (reg) sub = await reg.pushManager.getSubscription();
+  } catch {}
+  if (!sub || Notification.permission !== 'granted') {
+    pushStatus.textContent = 'Get a "Parsnip?" nudge once a day.';
+    pushEnable.hidden = false;
+    return;
+  }
+  let saved = null;
+  try { saved = localStorage.getItem('parsnip:pushEndpoint'); } catch {}
+  pushStatus.textContent = saved === sub.endpoint
+    ? 'Notifications are on for this device.'
+    : 'Notifications are allowed. One last step:';
+  pushCode.value = JSON.stringify(sub);
+  pushLink.hidden = false;
+}
+
+pushEnable.addEventListener('click', async () => {
+  try {
+    if ((await Notification.requestPermission()) !== 'granted') return refreshPush();
+    const reg = (await navigator.serviceWorker.getRegistration()) || (await navigator.serviceWorker.register('sw.js'));
+    await navigator.serviceWorker.ready;
+    await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64urlToBytes(VAPID_PUBLIC_KEY) });
+  } catch (e) {
+    alert("Couldn't turn on notifications: " + e.message);
+  }
+  refreshPush();
+});
+
+document.getElementById('push-copy').addEventListener('click', async (e) => {
+  const sub = JSON.parse(pushCode.value);
+  try { await navigator.clipboard.writeText(pushCode.value); } catch { pushCode.select(); document.execCommand('copy'); }
+  try { localStorage.setItem('parsnip:pushEndpoint', sub.endpoint); } catch {}
+  e.target.textContent = 'COPIED!';
+  setTimeout(() => (e.target.textContent = 'COPY CODE'), 1500);
+});
+
 function openSettings() {
   soundEl.checked = state.sound;
+  refreshPush();
   const list = document.getElementById('habit-list');
   list.innerHTML = '';
   state.habits.forEach((habit, i) => {

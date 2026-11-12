@@ -1,11 +1,11 @@
 name: Daily Parsnip nudge
 
-# Runs twice an hour; the script only sends when it's close to PARSNIP_TIME in
-# PARSNIP_TZ, and only once per day. GitHub's schedule can lag, so the script
-# hands ntfy the exact delivery time instead of relying on when the job starts.
+# Runs every 30 minutes. When a run lands within 35 minutes before PARSNIP_TIME
+# (in PARSNIP_TZ), it waits for the exact minute and sends a Web Push to the
+# Parsnip app. A dated cache entry makes sure only one nudge goes out per day.
 on:
   schedule:
-    - cron: '7,37 * * * *'
+    - cron: '4,34 * * * *'
   workflow_dispatch:
     inputs:
       send_now:
@@ -13,24 +13,59 @@ on:
         type: boolean
         default: true
 
+concurrency:
+  group: nudge
+  cancel-in-progress: false
+
 permissions:
-  actions: write # lets the job keep its own schedule from being auto-disabled
+  actions: write # cache entries + keeping the schedule from being auto-disabled
+
+env:
+  PARSNIP_TIME: ${{ vars.PARSNIP_TIME || '20:00' }}
+  PARSNIP_TZ: ${{ vars.PARSNIP_TZ || 'Australia/Melbourne' }}
+  SEND_NOW: ${{ github.event_name == 'workflow_dispatch' && inputs.send_now }}
 
 jobs:
   nudge:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+
+      - name: Is it nudge time?
+        id: plan
+        run: node .github/scripts/nudge.mjs plan >> "$GITHUB_OUTPUT"
+
+      - name: Already sent today?
+        id: sent
+        if: steps.plan.outputs.act == 'true' && env.SEND_NOW != 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: .nudge-sent
+          key: nudge-sent-${{ steps.plan.outputs.date }}
+          lookup-only: true
+
       - name: Send nudge
+        id: send
+        if: steps.plan.outputs.act == 'true' && steps.sent.outputs.cache-hit != 'true'
         env:
-          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
-          NTFY_SERVER: ${{ vars.NTFY_SERVER || 'https://ntfy.sh' }}
-          PARSNIP_TIME: ${{ vars.PARSNIP_TIME || '20:00' }}
-          PARSNIP_TZ: ${{ vars.PARSNIP_TZ || 'Australia/Melbourne' }}
-          APP_URL: ${{ vars.APP_URL || format('https://{0}.github.io/{1}/', github.repository_owner, github.event.repository.name) }}
-          SEND_NOW: ${{ github.event_name == 'workflow_dispatch' && inputs.send_now }}
-        run: python3 .github/scripts/nudge.py
+          PUSH_SUBSCRIPTION: ${{ secrets.PUSH_SUBSCRIPTION }}
+          VAPID_PUBLIC_KEY: ${{ vars.VAPID_PUBLIC_KEY }}
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          VAPID_SUBJECT: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
+          WAIT_SECONDS: ${{ steps.plan.outputs.wait }}
+        run: |
+          npm install --no-save --no-audit --no-fund web-push@3.6.7 >/dev/null
+          node .github/scripts/nudge.mjs send
+          mkdir -p .nudge-sent && date > .nudge-sent/stamp
+
+      - name: Remember today's nudge
+        if: steps.send.outcome == 'success' && env.SEND_NOW != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .nudge-sent
+          key: nudge-sent-${{ steps.plan.outputs.date }}
+
       - name: Keep schedule alive
         # Scheduled workflows in quiet repos are disabled after 60 days; re-enabling resets that clock.
         if: github.event_name == 'schedule'
