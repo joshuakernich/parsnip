@@ -1,0 +1,4 @@
+<!doctype html><meta charset="utf-8"><body style="background:#222;color:#fff;font:12px sans-serif;display:flex;flex-wrap:wrap;gap:12px;padding:12px">
+<script src="../icons.js"></script>
+<script>for (const k in ICONS){const d=document.createElement('div');d.style.textAlign='center';const c=iconCanvas(k,6);d.append(c,document.createElement('br'),k);document.body.append(d);
+const rows=ICONS[k].grid;if(rows.length!==16||rows.some(r=>r.length!==16))console.warn(k,rows.map(r=>r.length).join(','),rows.length)}</script>

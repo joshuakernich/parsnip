@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <title>Parsnip</title>
+  <meta name="description" content="Daily habit check-ins, celebrated in a rainbow pixel vortex.">
+  <meta name="theme-color" content="#12081f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Parsnip">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" type="image/png" href="img/icon-192.png">
+  <link rel="apple-touch-icon" href="img/apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <canvas id="vortex" aria-hidden="true"></canvas>
+
+  <header id="hud">
+    <div class="logo">PARSNIP</div>
+    <button id="gear" class="pixbtn icon-btn" aria-label="Settings">⚙</button>
+  </header>
+
+  <div id="install-tip" hidden>
+    <span>Install: tap <b>Share</b> → <b>Add to Home Screen</b></span>
+    <button class="x" aria-label="Dismiss">×</button>
+  </div>
+
+  <div id="celebrate" aria-live="polite">
+    <div class="c-name"></div>
+    <div class="c-count"><span class="num"></span><small>TAPS</small></div>
+    <div class="c-combo">COMBO <span class="num"></span><small class="unit"></small></div>
+    <div class="c-praise"></div>
+  </div>
+
+  <div id="empty" hidden>Tap <b>+</b> to add a habit</div>
+
+  <div id="undo" hidden><button class="pixbtn">UNDO</button></div>
+
+  <nav id="bar"></nav>
+
+  <!-- Settings sheet -->
+  <div id="settings" class="sheet" hidden>
+    <div class="panel">
+      <h2>SETTINGS</h2>
+      <section>
+        <h3>Habits</h3>
+        <ul id="habit-list"></ul>
+        <button id="add-habit" class="pixbtn wide">+ ADD HABIT</button>
+      </section>
+      <section>
+        <h3>Sound</h3>
+        <label class="toggle"><input type="checkbox" id="sound"> Celebration fanfare</label>
+      </section>
+      <section>
+        <h3>Daily nudge</h3>
+        <p>A "Parsnip?" notification arrives through the <b>ntfy</b> app once a day. To change the time, edit <code>PARSNIP_TIME</code> (24h, e.g. <code>20:00</code>) in the repo's
+          <a id="vars-link" target="_blank" rel="noopener">Actions variables</a>.</p>
+      </section>
+      <section>
+        <h3>Backup</h3>
+        <p>Check-ins are stored on this device only.</p>
+        <div class="row">
+          <button id="export" class="pixbtn">EXPORT</button>
+          <label class="pixbtn">IMPORT<input type="file" id="import" accept="application/json" hidden></label>
+        </div>
+      </section>
+      <button class="pixbtn wide close">DONE</button>
+    </div>
+  </div>
+
+  <!-- Habit editor sheet -->
+  <div id="editor" class="sheet" hidden>
+    <div class="panel">
+      <h2 id="editor-title">HABIT</h2>
+      <label class="field">Name<input id="habit-name" maxlength="20" autocomplete="off"></label>
+      <div id="icon-grid" role="listbox" aria-label="Icon"></div>
+      <div class="row">
+        <button id="habit-delete" class="pixbtn danger">DELETE</button>
+        <button id="habit-cancel" class="pixbtn">CANCEL</button>
+        <button id="habit-save" class="pixbtn go">SAVE</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="icons.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
