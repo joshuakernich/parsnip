@@ -33,8 +33,11 @@ jobs:
         run: python3 .github/scripts/nudge.py
       - name: Keep schedule alive
         # Scheduled workflows in quiet repos are disabled after 60 days; re-enabling resets that clock.
-        if: github.event_name == 'schedule' && github.run_number % 48 == 0
+        if: github.event_name == 'schedule'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/nudge.yml/enable"
+        run: |
+          # Once a day is plenty: only the first run after midnight UTC
+          [ "$(date -u +%H)" = "00" ] && [ "$(date -u +%M)" -lt 30 ] || exit 0
+          gh api -X PUT "repos/${{ github.repository }}/actions/workflows/nudge.yml/enable"
