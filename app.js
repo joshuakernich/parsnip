@@ -206,9 +206,12 @@ const vortex = {
 };
 
 // ----- Landscape: a psychedelic valley with a growing pile of icons -----
-// The pile is simulated: each icon drops near the middle, lands on whatever is
-// below it, and rolls downhill until it settles in a gap or reaches the ground.
-// Positions are in "units" (an icon is about 1 unit across) with y up from the ground.
+// The pile is pseudo-physics: each icon drops near the middle, lands on whatever
+// is below it, and rolls downhill until it settles. Icons collide only on a small
+// core (DISC) but draw much bigger, so they overlap like a real heap of stuff.
+// New arrivals fall in with gravity, bounce, spin and jostle their neighbours.
+// Positions are in "units" (an icon draws about 1 unit across), y up from the ground.
+const DISC = 0.3;
 let ridgeFar = new Float32Array(0), ridgeNear = new Float32Array(0);
 const landscape = {
   items: [], discs: [], cols: new Map(), unit: 40, unitTarget: 40,
@@ -221,6 +224,11 @@ const landscape = {
   },
   add(it, quiet) {
     const d = it._spot || this.place(it);
+    if (!quiet) {
+      // fall the last stretch, then bounce and settle
+      d.fy = d.y + 1.4; d.vy = -2; d.spin = (it.seed2 - 0.5) * 9;
+      d.rotNow = d.rot + d.spin * 0.25;
+    }
     this.items.push(it); this.discs.push(d);
     for (let c = Math.floor(d.x - d.r); c <= Math.floor(d.x + d.r); c++) {
       if (!this.cols.has(c)) this.cols.set(c, []);
@@ -248,12 +256,12 @@ const landscape = {
     return { y, on };
   },
   place(it) {
-    const r = 0.42 + it.seed2 * 0.12;
+    const r = DISC * (0.85 + it.seed2 * 0.3);
     // drop point: clustered around the middle (sum of uniforms ≈ bell curve)
-    let x = (it.seed + hash(it.seed * 91.7) + hash(it.seed * 13.1) - 1.5) * 2.3;
+    let x = (it.seed + hash(it.seed * 91.7) + hash(it.seed * 13.1) - 1.5) * 1.5;
     let { y, on } = this.restAt(x, r);
     // a little momentum lets it hop over small bumps before settling
-    let dir = 0, climb = 0.04 + hash(it.seed * 3.3) * 0.1;
+    let dir = 0, climb = 0.02 + hash(it.seed * 3.3) * 0.06;
     for (let i = 0; i < 900 && on; i++) {
       const lean = Math.sign(x - on.x) || (it.seed2 > 0.5 ? 1 : -1);
       if (!dir) dir = lean;
@@ -264,23 +272,62 @@ const landscape = {
       }
       x += dir * 0.025; y = n.y; on = n.on;
     }
-    return { x, y, r, rot: (hash(it.seed * 7.7) - 0.5) * 1.1 };
+    return {
+      x, y, r,
+      size: 0.95 + hash(it.seed * 5.9) * 0.35,   // drawn size, much bigger than the collision core
+      rot: (hash(it.seed * 7.7) - 0.5) * 1.8,
+      jx: 0, jy: 0, jvx: 0, jvy: 0,               // jostle offset (springs back)
+    };
   },
   // zoom so the whole pile (plus room on top) fits on screen
   fit(snap) {
     let minX = -1.5, maxX = 1.5, maxY = 1.5;
-    for (const d of this.discs) { minX = Math.min(minX, d.x - d.r); maxX = Math.max(maxX, d.x + d.r); maxY = Math.max(maxY, d.y + d.r); }
+    for (const d of this.discs) { minX = Math.min(minX, d.x - d.size / 2); maxX = Math.max(maxX, d.x + d.size / 2); maxY = Math.max(maxY, d.y + d.size / 2); }
     const halfW = Math.max(-minX, maxX) + 0.5;
     this.unitTarget = Math.min(ICON_SIZE * 1.5, (W * 0.46) / halfW, (this.ground() - H * 0.24) / (maxY + 1));
     if (snap) this.unit = this.unitTarget;
   },
   toScreen(d) { return { x: cx + d.x * this.unit, y: this.ground() - d.y * this.unit }; },
+  // the hero hands over just above the spot; the icon then drops in
   landing(it) {
     if (!it) return { x: cx, y: this.ground(), size: this.unit };
-    it._spot = it._spot || this.place(it);
-    return { ...this.toScreen(it._spot), size: it._spot.r * 2 * this.unit * 1.2 };
+    const d = it._spot = it._spot || this.place(it);
+    return { ...this.toScreen({ x: d.x, y: d.y + 1.4 }), size: d.size * this.unit };
   },
-  update(dt) { this.unit += (this.unitTarget - this.unit) * Math.min(1, dt * 3); },
+  update(dt) {
+    this.unit += (this.unitTarget - this.unit) * Math.min(1, dt * 3);
+    for (const d of this.discs) {
+      if (d.fy !== undefined) {
+        d.vy -= 34 * dt; d.fy += d.vy * dt;
+        d.spin *= Math.pow(0.02, dt);
+        d.rotNow += d.spin * dt; d.rotNow += (d.rot - d.rotNow) * Math.min(1, dt * 6);
+        if (d.fy <= d.y) {
+          if (d.vy < -2.5) {
+            this.jostle(d, -d.vy);
+            d.fy = d.y; d.vy = -d.vy * 0.32; // bounce
+          } else { delete d.fy; }
+        }
+      }
+      if (d.jx || d.jy || d.jvx || d.jvy) {
+        // damped spring back to rest
+        d.jvx += (-90 * d.jx - 9 * d.jvx) * dt; d.jvy += (-90 * d.jy - 9 * d.jvy) * dt;
+        d.jx += d.jvx * dt; d.jy += d.jvy * dt;
+        if (Math.abs(d.jx) + Math.abs(d.jy) + Math.abs(d.jvx) + Math.abs(d.jvy) < 1e-3) d.jx = d.jy = d.jvx = d.jvy = 0;
+      }
+    }
+  },
+  // an impact shoves nearby icons away and down a little
+  jostle(src, speed) {
+    for (let c = Math.floor(src.x - 1.5); c <= Math.floor(src.x + 1.5); c++) {
+      for (const d of this.cols.get(c) || []) {
+        if (d === src) continue;
+        const dx = d.x - src.x, dy = d.y - src.y, dist = Math.hypot(dx, dy);
+        if (dist > 1.5 || dist === 0) continue;
+        const k = (1 - dist / 1.5) * speed * 0.35;
+        d.jvx += (dx / dist) * k; d.jvy += (dy / dist) * k - k * 0.5;
+      }
+    }
+  },
   background(t) {
     const [dk, lt, ac] = tri;
     const hz = Math.round(H * 0.6);
@@ -330,9 +377,10 @@ const landscape = {
   },
   draw(t) {
     this.items.forEach((it, i) => {
-      const d = this.discs[i], p = this.toScreen(d);
+      const d = this.discs[i];
+      const p = this.toScreen({ x: d.x + d.jx, y: (d.fy ?? d.y) + d.jy });
       const bob = Math.sin(t * 5 + it.seed * 9) * boost * 1.5;
-      drawSprite(it.icon, p.x, p.y + bob, d.r * 2 * this.unit * 1.2, d.rot);
+      drawSprite(it.icon, p.x, p.y + bob, d.size * this.unit, d.fy !== undefined ? d.rotNow : d.rot);
     });
   },
 };
