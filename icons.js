@@ -510,6 +510,11 @@ const ICONS = {
   cat: { label: 'Cat' },
   rocket: { label: 'Launch' },
   trophy: { label: 'Win' },
+  bed: { label: 'Rest' },
+  journal: { label: 'Journal' },
+  dog: { label: 'Dog' },
+  mountain: { label: 'Hike' },
+  umbrella: { label: 'Rainy day' },
 };
 
 // ---------- Hi-fi rendering ----------
@@ -566,17 +571,18 @@ function iconPixels(name) {
 }
 
 // ---------- Spritesheet ----------
-// img/sprites.png is a 6x6 sheet (generated with ChatGPT) on a flat magenta
+// img/sprites.png is a 6x7 sheet (generated with ChatGPT) on a flat magenta
 // background. At load each cell is keyed, trimmed and centred into its own
 // square canvas. Until it loads, icons fall back to the pixel grids above.
 const SHEET = {
-  src: 'img/sprites.png', cols: 6, rows: 6,
+  src: 'img/sprites.png', cols: 6, rows: 7,
   order: ['parsnip', 'disco', 'jazz', 'water', 'run', 'lift',
     'book', 'sleep', 'apple', 'pill', 'tooth', 'heart',
     'sun', 'coffee', 'plant', 'write', 'note', 'paw',
     'star', 'coin', 'broom', 'lotus', 'flame', 'game',
     'bike', 'smile', 'guitar', 'palette', 'shower', 'salad',
-    'camera', 'tree', 'laptop', 'cat', 'rocket', 'trophy'],
+    'camera', 'tree', 'laptop', 'cat', 'rocket', 'trophy',
+    'cog', 'bed', 'journal', 'dog', 'mountain', 'umbrella'], // 'cog' is the settings button, not a habit
 };
 const SPRITE_PX = 256;
 const _sprites = {};
@@ -591,36 +597,30 @@ function loadSprites() {
       cx.drawImage(img, 0, 0);
       const data = cx.getImageData(0, 0, c.width, c.height);
       const d = data.data;
-      const W = c.width, H = c.height;
-      // Key out the magenta background (and its anti-aliased fringe)...
-      let queue = [];
-      for (let p = 0, i = 0; i < d.length; p++, i += 4) {
+      // Key out the magenta background (and its anti-aliased fringe)
+      for (let i = 0; i < d.length; i += 4) {
         const r = d[i], g = d[i + 1], b = d[i + 2];
         const bg = (r > 215 && b > 215 && g < 45 && Math.abs(r - b) < 30) // flat magenta
           || (Math.abs(r - b) < 18 && r - g > 70 && g < 70);               // its darker anti-aliased fringe
-        if (bg) { d[i + 3] = 0; queue.push(p); }
+        if (bg) d[i + 3] = 0;
       }
-      // ...then peel off the dark outline: dark pixels reachable from the
-      // background within OUTLINE_DEPTH steps become transparent too.
-      const OUTLINE_DEPTH = Math.round(W / 190);
-      for (let step = 0; step < OUTLINE_DEPTH && queue.length; step++) {
-        const next = [];
-        for (const p of queue) {
-          const x = p % W, y = (p - x) / W;
-          for (const q of [p - 1, p + 1, p - W, p + W]) {
-            if ((q === p - 1 && x === 0) || (q === p + 1 && x === W - 1) || q < 0 || q >= W * H) continue;
-            const j = q * 4;
-            if (d[j + 3] && Math.max(d[j], d[j + 1], d[j + 2]) < 95) { d[j + 3] = 0; next.push(q); }
-          }
+      // Despill: pinkish pixels on the edge of the background are leftover anti-aliasing
+      const W = c.width, H = c.height, edge = [];
+      for (let y = 1; y < H - 1; y++) {
+        for (let x = 1; x < W - 1; x++) {
+          const i = (y * W + x) * 4;
+          if (!d[i + 3]) continue;
+          const g = d[i + 1];
+          if (d[i] - g > 40 && d[i + 2] - g > 40 && (!d[i - 1] || !d[i + 7] || !d[i - W * 4 + 3] || !d[i + W * 4 + 3])) edge.push(i);
         }
-        queue = next;
       }
+      for (const i of edge) d[i + 3] = 0;
       cx.putImageData(data, 0, 0);
       const cw = c.width / SHEET.cols, ch = c.height / SHEET.rows;
       SHEET.order.forEach((name, n) => {
         const x0 = Math.round((n % SHEET.cols) * cw), y0 = Math.round(Math.floor(n / SHEET.cols) * ch);
         const w = Math.round(cw), h = Math.round(ch);
-        const m = Math.round(cw * 0.05); // skip the cell edges, where neighbours' outlines can bleed in
+        const m = Math.round(Math.min(cw, ch) * 0.08); // skip the cell edges, where neighbours' outlines can bleed in
         let minX = w, minY = h, maxX = -1, maxY = -1;
         for (let y = m; y < h - m; y++) {
           for (let x = m; x < w - m; x++) {

@@ -70,12 +70,11 @@ const WHITE = 0xffffffff;
 const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5].map((v) => (v + 0.5) / 16);
 
 // Tunnel of nested polygons we fly into. Each ring takes the next of NB palette
-// colours; inside BLUE_R the rings fade into an atmospheric blue.
-const NB = 6, RINGS = 3.2, BLUE_R = 0.5; // RINGS: rings per e-fold of distance (higher = thinner)
+// colours, alternating dark and light.
+const NB = 6, RINGS = 1.9; // RINGS: rings per e-fold of distance (lower = more space between shapes)
 const SHAPES = [6, 4, 3, 8, 5, 4]; // polygon sides, morphing from one to the next
 const SHAPE_HOLD = 3, SHAPE_MORPH = 1.2;
 const TAU = Math.PI * 2;
-const DEEP = [10, 34, 104], SKY = [64, 156, 255], MIST = [214, 240, 255];
 
 let PX = 2; // screen pixels per vortex pixel
 let W = 0, H = 0, cx = 0, cy = 0, maxR = 1;
@@ -111,7 +110,9 @@ function resize() {
 addEventListener('resize', resize);
 resize();
 
-const FLY = 11;    // seconds for an icon to travel from the core past the camera
+// Icons ride the tunnel: their distance grows by e every RINGS of phase, exactly like the rings.
+const FLY_MIN = Math.log(0.025), FLY_MAX = Math.log(1.4); // log of distance (x maxR) at spawn / exit
+const flight = () => phase / (RINGS * (FLY_MAX - FLY_MIN)); // fraction of a full trip
 let phase = 0;     // spiral rotation, advances faster during celebrations
 let travel = 0;    // flight clock, also sped up by celebrations
 let boost = 0;     // celebration energy, decays to 0
@@ -130,11 +131,11 @@ function buildInstances() {
 // Where an instance is on its flight out of the core. z runs 1 (far, at the
 // core) to 0 (at the camera); perspective makes it race outward and grow.
 function instPos(it) {
-  const p = (it.seed + travel / FLY) % 1;
+  const p = (it.seed + flight()) % 1;
   const z = 1 - p;
-  const f = 0.1 / (z + 0.025);
+  const rr = Math.exp(FLY_MIN + p * (FLY_MAX - FLY_MIN)) * maxR;
+  const f = rr / (maxR * 0.33); // size grows with distance, like the rings
   const a = it.seed2 * Math.PI * 2 + p * 1.8 + travel * 0.06;
-  const rr = f * maxR * 0.33;
   return { x: cx + Math.cos(a) * rr, y: cy + Math.sin(a) * rr, z, f };
 }
 
@@ -153,7 +154,7 @@ function evolvePalette(t) {
   for (let i = 0; i < NB; i++) {
     const h = base + i * spread + Math.sin(t * 0.37 + i * 1.7) * 14;
     const s = 0.72 + 0.22 * Math.sin(t * 0.11 + i);
-    const l = (i % 2 ? 0.6 : 0.46) + 0.06 * Math.sin(t * 0.17 + i * 2.3);
+    const l = (i % 2 ? 0.74 : 0.2) + 0.05 * Math.sin(t * 0.17 + i * 2.3);
     hsl(h, s, l, pal[i]);
   }
 }
@@ -169,7 +170,6 @@ function drawField(t) {
   evolvePalette(t * 3);
   const n = W * H;
   if (shapeD.length !== n) shapeD = new Float32Array(n);
-  const glow = 1 + boost * 0.6;
 
   const cyc = SHAPE_HOLD + SHAPE_MORPH, k = Math.floor(t / cyc), f = t - k * cyc;
   const n1 = SHAPES[k % SHAPES.length], n2 = SHAPES[(k + 1) % SHAPES.length];
@@ -187,18 +187,7 @@ function drawField(t) {
     const v = Math.log(d > 0.003 ? d : 0.003) * RINGS - phase;
     const band = ((Math.floor(v) % NB) + NB) % NB;
     const c = pal[band];
-    let R = c[0], G = c[1], B = c[2];
-    if (d < BLUE_R) {
-      // stepped, dithered blend into the blue core
-      const q = 1 - d / BLUE_R;
-      const step = Math.min(4, Math.floor(Math.min(1, q * 1.7) * 4 + dith[i] * 0.999)) / 4;
-      const g2 = Math.min(1, q * q * glow);
-      const tint = band % 2 ? 1.12 : 0.9; // keep the rings visible inside the blue
-      const k = g2 < 0.5 ? g2 * 2 : (g2 - 0.5) * 2;
-      const a = g2 < 0.5 ? DEEP : SKY, b = g2 < 0.5 ? SKY : MIST;
-      const bR = (a[0] + (b[0] - a[0]) * k) * tint, bG = (a[1] + (b[1] - a[1]) * k) * tint, bB = (a[2] + (b[2] - a[2]) * k) * tint;
-      R += (bR - R) * step; G += (bG - G) * step; B += (bB - B) * step;
-    }
+    const R = c[0], G = c[1], B = c[2];
     buf[i] = (255 << 24) | (Math.min(255, B) << 16) | (Math.min(255, G) << 8) | Math.min(255, R);
   }
   for (const ring of rings) {
@@ -232,7 +221,7 @@ function frame(ms) {
   const placed = instances.map((it) => ({ it, ...instPos(it) }));
   placed.sort((a, b) => b.z - a.z);
   for (const p of placed) {
-    const size = ICON_SIZE * p.f * 1.7;
+    const size = ICON_SIZE * p.f * 0.75;
     if (size < 2) continue;
     sctx.globalAlpha = Math.min(1, (1 - p.z) / 0.12);
     sctx.drawImage(iconSprite(p.it.icon), p.x - size / 2, p.y - size / 2, size, size);
@@ -259,7 +248,7 @@ function frame(ms) {
       const k = Math.min((age - hero.hold) / 0.45, 1);
       s = big * (1 - k * k);
       if (k >= 1) {
-        hero.inst.seed = (((-travel / FLY) % 1) + 1) % 1; // start at the core, right now
+        hero.inst.seed = (((-flight()) % 1) + 1) % 1; // start at the core, right now
         instances.push(hero.inst);
         hero = null;
       }
@@ -365,7 +354,7 @@ function tap(habit, btn) {
   const now = performance.now() / 1000;
   const inst = { icon: habit.icon, seed: 0, seed2: Math.random(), t: entry.t };
   if (hero) { // a previous hero still on screen launches from the core immediately
-    hero.inst.seed = (((-travel / FLY) % 1) + 1) % 1;
+    hero.inst.seed = (((-flight()) % 1) + 1) % 1;
     instances.push(hero.inst);
   }
   hero = { icon: habit.icon, inst, start: now, hold: 1.5 };
@@ -600,7 +589,8 @@ function openEditor(habit) {
     const b = document.createElement('button');
     b.setAttribute('role', 'option');
     b.setAttribute('aria-selected', String(key === chosenIcon));
-    b.append(iconEl(key, 3), icon.label);
+    b.setAttribute('aria-label', icon.label);
+    b.append(iconEl(key, 3));
     b.addEventListener('click', () => {
       chosenIcon = key;
       grid.querySelectorAll('button').forEach((x) => x.setAttribute('aria-selected', String(x === b)));
@@ -654,4 +644,8 @@ if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catc
 buildInstances();
 renderBar();
 requestAnimationFrame(frame);
-loadSprites().then((ok) => { if (ok) renderBar(); });
+loadSprites().then((ok) => {
+  if (!ok) return;
+  renderBar();
+  if (_sprites.cog) document.getElementById('gear').replaceChildren(iconEl('cog', 2));
+});
