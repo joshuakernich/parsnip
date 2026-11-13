@@ -220,6 +220,7 @@ html, body {
   font: 7px var(--font); color: var(--ink-dim); text-align: center;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   text-shadow: 1px 1px 0 #000;
+  text-transform: uppercase;
 }
 .habit.add { font: 28px var(--font); color: var(--ink-dim); background: rgba(14, 6, 28, .4); }
 
@@ -255,7 +256,7 @@ html, body {
   font-size: 10px;
 }
 #habit-list li canvas { width: 32px; height: 32px; image-rendering: pixelated; }
-#habit-list li .n { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#habit-list li .n { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-transform: uppercase; }
 #habit-list li .pixbtn { padding: 6px 8px; font-size: 10px; }
 
 a.pixbtn { text-decoration: none; color: var(--ink); }
@@ -285,6 +286,7 @@ a.pixbtn { text-decoration: none; color: var(--ink); }
   display: block; width: 100%; margin-top: 12px;
   font: 14px var(--font); color: var(--ink);
   background: #0f0820; border: 0; padding: 12px;
+  text-transform: uppercase;
 }
 .name-input::placeholder { color: #6c5a8e; }
 

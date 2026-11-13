@@ -12,6 +12,7 @@ const defaultState = () => ({
   ],
   log: [], // { h: habitId, t: epoch ms }
   sound: true,
+  music: true,
 });
 
 function loadState() {
@@ -269,11 +270,19 @@ function frame(ms) {
 
 // ---------- Sound ----------
 let audio;
+function getAudio() {
+  if (!audio) {
+    audio = new (window.AudioContext || window.webkitAudioContext)();
+    // play through the iPhone's silent switch, like a music app
+    try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch {}
+  }
+  if (audio.state === 'suspended') audio.resume();
+  return audio;
+}
 function fanfare(combo, count) {
   if (!state.sound) return;
   try {
-    audio = audio || new (window.AudioContext || window.webkitAudioContext)();
-    if (audio.state === 'suspended') audio.resume();
+    audio = getAudio();
     const now = audio.currentTime;
     const base = 523.25 * Math.pow(2, Math.min(combo - 1, 12) / 24);
     const steps = [0, 4, 7, 12, 16, 19, 24, 28];
@@ -343,6 +352,7 @@ function celebrate(habit, s, newBest) {
     });
   }
   fanfare(s.combo, s.count);
+  Music.hit();
 }
 
 // ---------- Tapping ----------
@@ -456,6 +466,12 @@ document.getElementById('vars-link').href = `https://github.com/${REPO}/settings
 
 const soundEl = document.getElementById('sound');
 soundEl.addEventListener('change', () => { state.sound = soundEl.checked; saveState(); });
+const musicEl = document.getElementById('music');
+musicEl.addEventListener('change', () => {
+  state.music = musicEl.checked;
+  saveState();
+  if (state.music) Music.start(getAudio()); else Music.stop();
+});
 
 // ---------- Push notifications ----------
 // The daily "Parsnip?" is sent by a GitHub Action using this device's push
@@ -527,6 +543,7 @@ document.getElementById('push-copy').addEventListener('click', async (e) => {
 
 function openSettings() {
   soundEl.checked = state.sound;
+  musicEl.checked = state.music;
   refreshPush();
   const list = document.getElementById('habit-list');
   list.innerHTML = '';
@@ -643,6 +660,15 @@ if (!standalone && !tipDismissed && /iPhone|iPad/.test(navigator.userAgent)) tip
 tipEl.querySelector('.x').addEventListener('click', () => {
   tipEl.hidden = true;
   try { localStorage.setItem('parsnip:tip', '1'); } catch {}
+});
+
+// ---------- Soundtrack ----------
+// Browsers only allow audio after a gesture, so the music starts on the first touch.
+Music.onKick = () => { boost = Math.max(boost, 0.22); }; // the tunnel surges on every kick
+addEventListener('pointerdown', () => { if (state.music && !Music.playing) Music.start(getAudio()); });
+document.addEventListener('visibilitychange', () => {
+  if (!audio) return;
+  if (document.hidden) audio.suspend(); else audio.resume();
 });
 
 // ---------- Go ----------
