@@ -500,11 +500,21 @@ const ICONS = {
     '................',
     '................',
   ]},
+  guitar: { label: 'Guitar' },
+  palette: { label: 'Paint' },
+  shower: { label: 'Shower' },
+  salad: { label: 'Salad' },
+  camera: { label: 'Photo' },
+  tree: { label: 'Nature' },
+  laptop: { label: 'Work' },
+  cat: { label: 'Cat' },
+  rocket: { label: 'Launch' },
+  trophy: { label: 'Win' },
 };
 
 // ---------- Hi-fi rendering ----------
 // The 16x16 sprites are upscaled to 32x32 with EPX (Scale2x), which rounds off
-// diagonals, with a 1px outline outside and softened inner lines. Flat colour, no bevel.
+// diagonals, with no outer outline and softened inner lines. Flat colour, no bevel.
 const ICON_SIZE = 32;
 
 function scale2x(rows) {
@@ -528,7 +538,7 @@ const _mul = (c, k) => c.map((v) => Math.round(v * k));
 const OUTLINE = [22, 12, 30];
 
 function iconPixels(name) {
-  const g = scale2x((ICONS[name] || ICONS.parsnip).grid);
+  const g = scale2x((ICONS[name] && ICONS[name].grid) || ICONS.star.grid);
   const n = ICON_SIZE;
   const ch = (x, y) => (x < 0 || y < 0 || x >= n || y >= n ? '.' : g[y][x]);
   const empty = (x, y) => ch(x, y) === '.';
@@ -539,7 +549,7 @@ function iconPixels(name) {
       if (c === '.') continue;
       let col;
       if (c === 'k') {
-        if (empty(x - 1, y) || empty(x + 1, y) || empty(x, y - 1) || empty(x, y + 1)) col = OUTLINE;
+        if (empty(x - 1, y) || empty(x + 1, y) || empty(x, y - 1) || empty(x, y + 1)) continue; // no outer outline
         else {
           // inner side of a doubled outline / interior line: a deep shade of the neighbouring fill
           const nb = [ch(x, y + 1), ch(x + 1, y), ch(x - 1, y), ch(x, y - 1)].find((k) => PALETTE[k] && k !== 'k');
@@ -555,11 +565,108 @@ function iconPixels(name) {
   return px;
 }
 
+// ---------- Spritesheet ----------
+// img/sprites.png is a 6x6 sheet (generated with ChatGPT) on a flat magenta
+// background. At load each cell is keyed, trimmed and centred into its own
+// square canvas. Until it loads, icons fall back to the pixel grids above.
+const SHEET = {
+  src: 'img/sprites.png', cols: 6, rows: 6,
+  order: ['parsnip', 'disco', 'jazz', 'water', 'run', 'lift',
+    'book', 'sleep', 'apple', 'pill', 'tooth', 'heart',
+    'sun', 'coffee', 'plant', 'write', 'note', 'paw',
+    'star', 'coin', 'broom', 'lotus', 'flame', 'game',
+    'bike', 'smile', 'guitar', 'palette', 'shower', 'salad',
+    'camera', 'tree', 'laptop', 'cat', 'rocket', 'trophy'],
+};
+const SPRITE_PX = 256;
+const _sprites = {};
+
+function loadSprites() {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement('canvas');
+      c.width = img.naturalWidth; c.height = img.naturalHeight;
+      const cx = c.getContext('2d', { willReadFrequently: true });
+      cx.drawImage(img, 0, 0);
+      const data = cx.getImageData(0, 0, c.width, c.height);
+      const d = data.data;
+      const W = c.width, H = c.height;
+      // Key out the magenta background (and its anti-aliased fringe)...
+      let queue = [];
+      for (let p = 0, i = 0; i < d.length; p++, i += 4) {
+        const r = d[i], g = d[i + 1], b = d[i + 2];
+        const bg = (r > 215 && b > 215 && g < 45 && Math.abs(r - b) < 30) // flat magenta
+          || (Math.abs(r - b) < 18 && r - g > 70 && g < 70);               // its darker anti-aliased fringe
+        if (bg) { d[i + 3] = 0; queue.push(p); }
+      }
+      // ...then peel off the dark outline: dark pixels reachable from the
+      // background within OUTLINE_DEPTH steps become transparent too.
+      const OUTLINE_DEPTH = Math.round(W / 190);
+      for (let step = 0; step < OUTLINE_DEPTH && queue.length; step++) {
+        const next = [];
+        for (const p of queue) {
+          const x = p % W, y = (p - x) / W;
+          for (const q of [p - 1, p + 1, p - W, p + W]) {
+            if ((q === p - 1 && x === 0) || (q === p + 1 && x === W - 1) || q < 0 || q >= W * H) continue;
+            const j = q * 4;
+            if (d[j + 3] && Math.max(d[j], d[j + 1], d[j + 2]) < 95) { d[j + 3] = 0; next.push(q); }
+          }
+        }
+        queue = next;
+      }
+      cx.putImageData(data, 0, 0);
+      const cw = c.width / SHEET.cols, ch = c.height / SHEET.rows;
+      SHEET.order.forEach((name, n) => {
+        const x0 = Math.round((n % SHEET.cols) * cw), y0 = Math.round(Math.floor(n / SHEET.cols) * ch);
+        const w = Math.round(cw), h = Math.round(ch);
+        const m = Math.round(cw * 0.05); // skip the cell edges, where neighbours' outlines can bleed in
+        let minX = w, minY = h, maxX = -1, maxY = -1;
+        for (let y = m; y < h - m; y++) {
+          for (let x = m; x < w - m; x++) {
+            if (d[((y0 + y) * c.width + x0 + x) * 4 + 3] > 40) {
+              if (x < minX) minX = x; if (x > maxX) maxX = x;
+              if (y < minY) minY = y; if (y > maxY) maxY = y;
+            }
+          }
+        }
+        if (maxX < 0) return;
+        const bw = maxX - minX + 1, bh = maxY - minY + 1;
+        const k = (SPRITE_PX * 0.9) / Math.max(bw, bh);
+        const s = document.createElement('canvas');
+        s.width = s.height = SPRITE_PX;
+        const sx = s.getContext('2d');
+        sx.imageSmoothingQuality = 'high';
+        sx.drawImage(c, x0 + minX, y0 + minY, bw, bh, (SPRITE_PX - bw * k) / 2, (SPRITE_PX - bh * k) / 2, bw * k, bh * k);
+        _sprites[name] = s;
+      });
+      _iconCache.clear();
+      resolve(true);
+    };
+    img.onerror = () => resolve(false);
+    img.src = SHEET.src;
+  });
+}
+
+// Largest available image of an icon, for drawing big and smooth.
+function iconSprite(name) {
+  return _sprites[name] || iconCanvas(name, 4);
+}
+
 // Render an icon to an offscreen canvas at `scale` canvas pixels per hi-fi pixel.
 const _iconCache = new Map();
 function iconCanvas(name, scale = 1) {
   const key = name + '@' + scale;
   if (_iconCache.has(key)) return _iconCache.get(key);
+  if (_sprites[name]) {
+    const c = document.createElement('canvas');
+    c.width = c.height = ICON_SIZE * scale;
+    const cx = c.getContext('2d');
+    cx.imageSmoothingQuality = 'high';
+    cx.drawImage(_sprites[name], 0, 0, c.width, c.height);
+    _iconCache.set(key, c);
+    return c;
+  }
   const n = ICON_SIZE;
   const base = document.createElement('canvas');
   base.width = base.height = n;

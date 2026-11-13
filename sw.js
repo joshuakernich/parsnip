@@ -1,8 +1,8 @@
 // App files: network first so updates show immediately, cache when offline. Fonts: cache first.
-const CACHE = 'parsnip-v6';
+const CACHE = 'parsnip-v7';
 const SHELL = [
   './', 'index.html', 'style.css', 'app.js', 'icons.js', 'manifest.webmanifest',
-  'img/icon-192.png', 'img/icon-512.png', 'img/apple-touch-icon.png',
+  'img/icon-192.png', 'img/icon-512.png', 'img/apple-touch-icon.png', 'img/sprites.png',
 ];
 
 self.addEventListener('install', (e) => {

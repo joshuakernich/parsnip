@@ -73,7 +73,7 @@ const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5].map((v) => 
 // colours; inside BLUE_R the rings fade into an atmospheric blue.
 const NB = 6, RINGS = 3.2, BLUE_R = 0.5; // RINGS: rings per e-fold of distance (higher = thinner)
 const SHAPES = [6, 4, 3, 8, 5, 4]; // polygon sides, morphing from one to the next
-const SHAPE_HOLD = 8, SHAPE_MORPH = 2.5;
+const SHAPE_HOLD = 3, SHAPE_MORPH = 1.2;
 const TAU = Math.PI * 2;
 const DEEP = [10, 34, 104], SKY = [64, 156, 255], MIST = [214, 240, 255];
 
@@ -133,7 +133,7 @@ function instPos(it) {
   const p = (it.seed + travel / FLY) % 1;
   const z = 1 - p;
   const f = 0.1 / (z + 0.025);
-  const a = it.seed2 * Math.PI * 2 + p * 1.8 + phase * 0.25;
+  const a = it.seed2 * Math.PI * 2 + p * 1.8 + travel * 0.06;
   const rr = f * maxR * 0.33;
   return { x: cx + Math.cos(a) * rr, y: cy + Math.sin(a) * rr, z, f };
 }
@@ -166,7 +166,7 @@ function polyDist(r, a, n) {
 
 let shapeD = new Float32Array(0);
 function drawField(t) {
-  evolvePalette(t);
+  evolvePalette(t * 3);
   const n = W * H;
   if (shapeD.length !== n) shapeD = new Float32Array(n);
   const glow = 1 + boost * 0.6;
@@ -175,8 +175,8 @@ function drawField(t) {
   const n1 = SHAPES[k % SHAPES.length], n2 = SHAPES[(k + 1) % SHAPES.length];
   let mix = f < SHAPE_HOLD ? 0 : (f - SHAPE_HOLD) / SHAPE_MORPH;
   mix = mix * mix * (3 - 2 * mix);
-  const rot = t * 0.12;                     // whole tunnel slowly turns
-  const twist = Math.sin(t * 0.09) * 0.55;  // deeper rings rotate relative to nearer ones
+  const rot = t * 0.4;                      // whole tunnel turns
+  const twist = Math.sin(t * 0.3) * 0.6;    // deeper rings rotate relative to nearer ones
 
   for (let i = 0; i < n; i++) {
     const r = distA[i];
@@ -216,7 +216,7 @@ function frame(ms) {
   const dt = Math.min((ms - last) / 1000, 0.05);
   last = ms;
   const t = ms / 1000;
-  phase += dt * (0.55 + boost * 3); // flight speed into the tunnel
+  phase += dt * (1.8 + boost * 5); // flight speed into the tunnel (icons fly on their own clock)
   travel += dt * (1 + boost * 2.5);
   boost = Math.max(0, boost - dt * 0.55);
   rings = rings.filter((r) => (r.r += dt * (0.9 + r.r), r.w = 0.018 + r.r * 0.03, r.r < 1.3));
@@ -235,7 +235,7 @@ function frame(ms) {
     const size = ICON_SIZE * p.f * 1.7;
     if (size < 2) continue;
     sctx.globalAlpha = Math.min(1, (1 - p.z) / 0.12);
-    sctx.drawImage(iconCanvas(p.it.icon, 4), p.x - size / 2, p.y - size / 2, size, size);
+    sctx.drawImage(iconSprite(p.it.icon), p.x - size / 2, p.y - size / 2, size, size);
   }
   sctx.globalAlpha = 1;
 
@@ -266,7 +266,7 @@ function frame(ms) {
     }
     if (hero && s >= 1) {
       const wob = age > 0.35 && age < hero.hold ? Math.sin(age * 9) * 1.5 : 0;
-      sctx.drawImage(iconCanvas(hero.icon, 4), cx - s / 2 + wob, cy - s / 2, s, s);
+      sctx.drawImage(iconSprite(hero.icon), cx - s / 2 + wob, cy - s / 2, s, s);
     }
   }
   requestAnimationFrame(frame);
@@ -654,3 +654,4 @@ if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catc
 buildInstances();
 renderBar();
 requestAnimationFrame(frame);
+loadSprites().then((ok) => { if (ok) renderBar(); });
