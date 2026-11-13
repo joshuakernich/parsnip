@@ -69,22 +69,22 @@ const ICONS = {
     '.n.........yyy..',
   ]},
   jazz: { label: 'Jazz', grid: [
-    'kk.........kkkk.',
-    'kdk........kbbk.',
-    '.kYk.......kbbk.',
-    '..kyk......kb.k.',
-    '...kyk...kkkb...',
-    '....kyk.kbbbb...',
-    '....kyYk.kbbk...',
-    '....kyYk..kk....',
-    '....kyYk....kkk.',
-    '....kyYwk..kyyyk',
-    '....kyYyk.kyYYYk',
-    '....kyYyk.kyYkk.',
-    '....kyYyk.kyYk..',
-    '.....kyYykkyYk..',
-    '......kyYYYYk...',
-    '.......kkkkk....',
+    'kkk.............',
+    'kddkk...........',
+    '.kkyyk..........',
+    '....kyyk........',
+    '.....kyk........',
+    '.....kwyk.kkkkk.',
+    '.....kwyYkyUUUUk',
+    '....kWwyYkkyUUyk',
+    '....kwyyYk.kyyYk',
+    '....kWyyYk.kyyk.',
+    '....kwyyYk.kyYk.',
+    '...kWyyyYk.kyYk.',
+    '...kwyyyYk.kyYk.',
+    '...kyyyyYYkyyYk.',
+    '....kyyyyyyyYk..',
+    '.....kkkkkkkk...',
   ]},
   water: { label: 'Water', grid: [
     '................',
@@ -504,8 +504,7 @@ const ICONS = {
 
 // ---------- Hi-fi rendering ----------
 // The 16x16 sprites are upscaled to 32x32 with EPX (Scale2x), which rounds off
-// diagonals, then shaded: a 1px outline outside, softened inner lines, a lit
-// top-left rim and a shaded bottom-right rim.
+// diagonals, with a 1px outline outside and softened inner lines. Flat colour, no bevel.
 const ICON_SIZE = 32;
 
 function scale2x(rows) {
@@ -526,7 +525,6 @@ function scale2x(rows) {
 
 const _rgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
 const _mul = (c, k) => c.map((v) => Math.round(v * k));
-const _lift = (c, k) => c.map((v) => Math.round(v + (255 - v) * k));
 const OUTLINE = [22, 12, 30];
 
 function iconPixels(name) {
@@ -534,7 +532,6 @@ function iconPixels(name) {
   const n = ICON_SIZE;
   const ch = (x, y) => (x < 0 || y < 0 || x >= n || y >= n ? '.' : g[y][x]);
   const empty = (x, y) => ch(x, y) === '.';
-  const edge = (x, y) => { const c = ch(x, y); return c === '.' || c === 'k'; };
   const px = new Uint8ClampedArray(n * n * 4);
   for (let y = 0; y < n; y++) {
     for (let x = 0; x < n; x++) {
@@ -549,10 +546,7 @@ function iconPixels(name) {
           col = nb ? _mul(_rgb(PALETTE[nb]), 0.5) : OUTLINE;
         }
       } else {
-        const base = _rgb(PALETTE[c]);
-        const ul = edge(x - 1, y) || edge(x, y - 1) || edge(x - 1, y - 1);
-        const dr = edge(x + 1, y) || edge(x, y + 1) || edge(x + 1, y + 1);
-        col = ul && !dr ? _lift(base, 0.28) : dr && !ul ? _mul(base, 0.74) : base;
+        col = _rgb(PALETTE[c]);
       }
       const i = (y * n + x) * 4;
       px[i] = col[0]; px[i + 1] = col[1]; px[i + 2] = col[2]; px[i + 3] = 255;

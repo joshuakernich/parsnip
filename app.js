@@ -69,8 +69,12 @@ const RAINBOW = ['#ff2a4d', '#ff6a1f', '#ffb21f', '#ffe83a', '#9cf23a', '#2ee06a
 const WHITE = 0xffffffff;
 const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5].map((v) => (v + 0.5) / 16);
 
-// Spiral shape: NB thick bands per arm cycle. Inside BLUE_R the bands swirl into an atmospheric blue.
-const NB = 6, ARMS = 3, TWIST = 0.8, BLUE_R = 0.5;
+// Tunnel of nested polygons we fly into. Each ring takes the next of NB palette
+// colours; inside BLUE_R the rings fade into an atmospheric blue.
+const NB = 6, RINGS = 3.2, BLUE_R = 0.5; // RINGS: rings per e-fold of distance (higher = thinner)
+const SHAPES = [6, 4, 3, 8, 5, 4]; // polygon sides, morphing from one to the next
+const SHAPE_HOLD = 8, SHAPE_MORPH = 2.5;
+const TAU = Math.PI * 2;
 const DEEP = [10, 34, 104], SKY = [64, 156, 255], MIST = [214, 240, 255];
 
 let PX = 2; // screen pixels per vortex pixel
@@ -154,22 +158,42 @@ function evolvePalette(t) {
   }
 }
 
+// Distance measured in polygon "apothems": constant along an n-gon outline.
+function polyDist(r, a, n) {
+  const seg = TAU / n;
+  return r * Math.cos(a - seg * Math.floor(a / seg) - seg / 2);
+}
+
+let shapeD = new Float32Array(0);
 function drawField(t) {
   evolvePalette(t);
   const n = W * H;
+  if (shapeD.length !== n) shapeD = new Float32Array(n);
   const glow = 1 + boost * 0.6;
+
+  const cyc = SHAPE_HOLD + SHAPE_MORPH, k = Math.floor(t / cyc), f = t - k * cyc;
+  const n1 = SHAPES[k % SHAPES.length], n2 = SHAPES[(k + 1) % SHAPES.length];
+  let mix = f < SHAPE_HOLD ? 0 : (f - SHAPE_HOLD) / SHAPE_MORPH;
+  mix = mix * mix * (3 - 2 * mix);
+  const rot = t * 0.12;                     // whole tunnel slowly turns
+  const twist = Math.sin(t * 0.09) * 0.55;  // deeper rings rotate relative to nearer ones
+
   for (let i = 0; i < n; i++) {
     const r = distA[i];
-    const v = angA[i] * ARMS + logR[i] * TWIST - phase;
-    const band = ((v - Math.floor(v)) * NB) | 0;
+    const a = angA[i] * TAU - rot - logR[i] * twist;
+    let d = polyDist(r, a, n1);
+    if (mix > 0) d += (polyDist(r, a, n2) - d) * mix;
+    shapeD[i] = d;
+    const v = Math.log(d > 0.003 ? d : 0.003) * RINGS - phase;
+    const band = ((Math.floor(v) % NB) + NB) % NB;
     const c = pal[band];
     let R = c[0], G = c[1], B = c[2];
-    if (r < BLUE_R) {
+    if (d < BLUE_R) {
       // stepped, dithered blend into the blue core
-      const q = 1 - r / BLUE_R;
+      const q = 1 - d / BLUE_R;
       const step = Math.min(4, Math.floor(Math.min(1, q * 1.7) * 4 + dith[i] * 0.999)) / 4;
       const g2 = Math.min(1, q * q * glow);
-      const tint = band % 2 ? 1.12 : 0.9; // keep the swirl visible inside the blue
+      const tint = band % 2 ? 1.12 : 0.9; // keep the rings visible inside the blue
       const k = g2 < 0.5 ? g2 * 2 : (g2 - 0.5) * 2;
       const a = g2 < 0.5 ? DEEP : SKY, b = g2 < 0.5 ? SKY : MIST;
       const bR = (a[0] + (b[0] - a[0]) * k) * tint, bG = (a[1] + (b[1] - a[1]) * k) * tint, bB = (a[2] + (b[2] - a[2]) * k) * tint;
@@ -180,8 +204,8 @@ function drawField(t) {
   for (const ring of rings) {
     const rr = ring.r, w = ring.w;
     for (let i = 0; i < n; i++) {
-      const d = Math.abs(distA[i] - rr);
-      if (d < w && dith[i] > d / w * 0.9) buf[i] = WHITE;
+      const e = Math.abs(shapeD[i] - rr);
+      if (e < w && dith[i] > e / w * 0.9) buf[i] = WHITE;
     }
   }
   ctx.putImageData(img, 0, 0);
@@ -192,7 +216,7 @@ function frame(ms) {
   const dt = Math.min((ms - last) / 1000, 0.05);
   last = ms;
   const t = ms / 1000;
-  phase += dt * (0.2 + boost * 1.8);
+  phase += dt * (0.55 + boost * 3); // flight speed into the tunnel
   travel += dt * (1 + boost * 2.5);
   boost = Math.max(0, boost - dt * 0.55);
   rings = rings.filter((r) => (r.r += dt * (0.9 + r.r), r.w = 0.018 + r.r * 0.03, r.r < 1.3));
@@ -208,7 +232,7 @@ function frame(ms) {
   const placed = instances.map((it) => ({ it, ...instPos(it) }));
   placed.sort((a, b) => b.z - a.z);
   for (const p of placed) {
-    const size = ICON_SIZE * p.f * 0.9;
+    const size = ICON_SIZE * p.f * 1.7;
     if (size < 2) continue;
     sctx.globalAlpha = Math.min(1, (1 - p.z) / 0.12);
     sctx.drawImage(iconCanvas(p.it.icon, 4), p.x - size / 2, p.y - size / 2, size, size);
