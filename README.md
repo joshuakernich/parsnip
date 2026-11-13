@@ -1,6 +1,6 @@
 # Parsnip
 
-A tiny habit tracker. Tap a pixel-art habit button once a day and Parsnip makes a big deal of it in a rainbow pixel vortex, with your total taps and your day-streak COMBO.
+A tiny habit tracker. Add habits, tap one each day, and Parsnip makes a big deal of it: a polygon warp tunnel, a psychedelic landscape with a growing pile, or a self-playing snake. You also see your total taps and your day-streak COMBO, over a generative synthwave soundtrack.
 
 **App:** https://joshuakernich.github.io/parsnip/. On iPhone, open it in Safari, then **Share → Add to Home Screen**.
 
@@ -8,28 +8,20 @@ Check-ins live in the browser's local storage on your device. Use **Settings →
 
 ## Daily "Parsnip?" nudge
 
-Parsnip sends its own push notification. Tapping it opens the installed app.
+Anyone can turn on a daily push in **Settings → Daily nudge** and pick a time. On iPhone, this only works after adding Parsnip to the Home Screen and opening it from there.
 
-1. On iPhone, open Parsnip **from the Home Screen** (push only works there), then go to **Settings → Turn on notifications**.
-2. Tap **Copy code** and save it as the `PUSH_SUBSCRIPTION` Actions secret ([secrets page](https://github.com/joshuakernich/parsnip/settings/secrets/actions)). For more than one device, use a JSON array of codes.
-
-`.github/workflows/nudge.yml` runs every 30 minutes. When a run lands within 35 minutes of your time, it waits for the exact minute and sends the push through Web Push (VAPID). It sends once per day.
-
-| Setting | Where | Default |
-| --- | --- | --- |
-| `PUSH_SUBSCRIPTION` | Actions secret: the code copied from the app | — |
-| `VAPID_PRIVATE_KEY` | Actions secret: pairs with the public key in `app.js` | — |
-| `VAPID_PUBLIC_KEY` | Actions variable | — |
-| `PARSNIP_TIME` | Actions variable, 24h `HH:MM` | `20:00` |
-| `PARSNIP_TZ` | Actions variable, IANA zone | `Australia/Melbourne` |
+The app registers the device's Web Push subscription, time and time zone with a small Cloudflare Worker (`worker/`). Every minute the Worker sends "Parsnip?" to every device that's due. The Worker uses D1 for storage and implements VAPID and aes128gcm encryption with WebCrypto.
 
 ```bash
-gh variable set PARSNIP_TIME --body 19:30 -R joshuakernich/parsnip
+cd worker
+npx wrangler deploy                               # deploy changes
+npx wrangler secret put VAPID_PRIVATE_KEY         # VAPID private key ("d"), pairs with the public key in app.js
+npx wrangler d1 execute parsnip --remote --file schema.sql
 ```
 
-To send a test notification now, run **Actions → Daily Parsnip nudge → Run workflow**.
+Endpoints: `POST /subscribe {subscription, time, tz}`, `POST /unsubscribe {endpoint}`, `POST /test {endpoint}`.
 
 ## Development
 
 Static files, no build step. `python3 -m http.server` and open http://localhost:8000.
-Regenerate the app icons after editing the parsnip sprite: `node tools/make-icons.mjs`.
+Regenerate the app icons from the spritesheet: `node tools/make-icons.mjs`. The icon sheets in `img/` were generated with ChatGPT and are sliced at load.

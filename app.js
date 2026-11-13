@@ -1,6 +1,5 @@
 'use strict';
 
-const REPO = 'joshuakernich/parsnip';
 const STORE_KEY = 'parsnip:v1';
 
 // ---------- State ----------
@@ -52,7 +51,7 @@ function statsFor(hid, log = state.log) {
   return { count: taps.length, combo, best, today };
 }
 
-// ---------- Vortex renderer ----------
+// ---------- Renderer ----------
 const canvas = document.getElementById('vortex');
 const ctx = canvas.getContext('2d');
 const stage = document.getElementById('stage');
@@ -107,37 +106,21 @@ function resize() {
 addEventListener('resize', resize);
 resize();
 
-// Icons ride the tunnel: their distance grows by e every RINGS of phase, exactly like the rings.
-const FLY_MIN = Math.log(0.025), FLY_MAX = Math.log(1.4); // log of distance (x maxR) at spawn / exit
-const flight = () => phase / (RINGS * (FLY_MAX - FLY_MIN)); // fraction of a full trip
-let phase = 0;     // spiral rotation, advances faster during celebrations
-let travel = 0;    // flight clock, also sped up by celebrations
+// ---------- Display modes ----------
+// Each mode paints a background into the pixel buffer (returning the distance
+// field that celebration rings follow), draws its collection of icons on the
+// smooth sprite layer, and says where a newly tapped icon should land.
 let boost = 0;     // celebration energy, decays to 0
 let rings = [];    // expanding shockwave rings { r, w }
 let particles = [];
-let instances = []; // icons in the vortex
 let hero = null;   // the big celebrating icon
 
 const hash = (n) => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
+const toItem = (e) => ({ icon: (habitById(e.h) || {}).icon || 'star', t: e.t, seed: hash(e.t % 1e7), seed2: hash((e.t % 1e7) + 7.3) });
+const rgb32 = (c) => (255 << 24) | (Math.min(255, c[2]) << 16) | (Math.min(255, c[1]) << 8) | Math.min(255, c[0]);
+const mix = (a, b, k) => [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k];
 
-function buildInstances() {
-  const recent = state.log.slice(-500);
-  instances = recent.map((e) => ({ icon: (habitById(e.h) || {}).icon || 'star', seed: hash(e.t % 1e7), seed2: hash((e.t % 1e7) + 7.3), t: e.t }));
-}
-
-// Where an instance is on its flight out of the core. z runs 1 (far, at the
-// core) to 0 (at the camera); perspective makes it race outward and grow.
-function instPos(it) {
-  const p = (it.seed + flight()) % 1;
-  const z = 1 - p;
-  const rr = Math.exp(FLY_MIN + p * (FLY_MAX - FLY_MIN)) * maxR;
-  const f = rr / (maxR * 0.33); // size grows with distance, like the rings
-  const a = it.seed2 * Math.PI * 2 + p * 1.8 + travel * 0.06;
-  return { x: cx + Math.cos(a) * rr, y: cy + Math.sin(a) * rr, z, f };
-}
-
-// Curated warp palettes: [dark, light, accent]. Rings run dark, light, dark,
-// light, dark, accent. Each palette holds for a while, then crossfades to the next.
+// Curated palettes: [dark, light, accent]. Each holds for a while, then crossfades to the next.
 const PALETTES = [
   ['#1b1340', '#ffb38a', '#ff5f7e'], // midnight peach
   ['#0b2545', '#8de4ff', '#13c4a3'], // ocean
@@ -148,19 +131,23 @@ const PALETTES = [
   ['#4a0d3a', '#ffd6e8', '#ff7ab6'], // bubblegum
   ['#2b2d42', '#fdf0a6', '#4cc9f0'], // lemon
 ].map((p) => p.map((h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16))));
-const RING_ROLES = [0, 1, 0, 1, 0, 2];
 const PAL_HOLD = 5, PAL_FADE = 1.5;
-const pal = Array.from({ length: NB }, () => [0, 0, 0]);
+const tri = [[0, 0, 0], [0, 0, 0], [0, 0, 0]]; // current dark, light, accent
 function evolvePalette(t) {
   const cyc = PAL_HOLD + PAL_FADE, k = Math.floor(t / cyc), f = t - k * cyc;
   const A = PALETTES[k % PALETTES.length], B = PALETTES[(k + 1) % PALETTES.length];
   let m = f < PAL_HOLD ? 0 : (f - PAL_HOLD) / PAL_FADE;
   m = m * m * (3 - 2 * m);
-  for (let i = 0; i < NB; i++) {
-    const a = A[RING_ROLES[i]], b = B[RING_ROLES[i]];
-    for (let c = 0; c < 3; c++) pal[i][c] = a[c] + (b[c] - a[c]) * m;
-  }
+  for (let i = 0; i < 3; i++) for (let c = 0; c < 3; c++) tri[i][c] = A[i][c] + (B[i][c] - A[i][c]) * m;
 }
+
+// ----- Vortex: a tunnel of nested polygons, icons flying out at you -----
+const RING_ROLES = [0, 1, 0, 1, 0, 2]; // rings run dark, light, dark, light, dark, accent
+// Icons ride the tunnel: their distance grows by e every RINGS of phase, exactly like the rings.
+const FLY_MIN = Math.log(0.025), FLY_MAX = Math.log(1.4); // log of distance (x maxR) at spawn / exit
+let phase = 0;     // flight into the tunnel, faster during celebrations
+let travel = 0;    // slow clock for icon drift
+const flight = () => phase / (RINGS * (FLY_MAX - FLY_MIN)); // fraction of a full trip
 
 // Distance measured in polygon "apothems": constant along an n-gon outline.
 function polyDist(r, a, n) {
@@ -169,39 +156,277 @@ function polyDist(r, a, n) {
 }
 
 let shapeD = new Float32Array(0);
-function drawField(t) {
-  evolvePalette(t);
-  const n = W * H;
-  if (shapeD.length !== n) shapeD = new Float32Array(n);
-
-  const cyc = SHAPE_HOLD + SHAPE_MORPH, k = Math.floor(t / cyc), f = t - k * cyc;
-  const n1 = SHAPES[k % SHAPES.length], n2 = SHAPES[(k + 1) % SHAPES.length];
-  let mix = f < SHAPE_HOLD ? 0 : (f - SHAPE_HOLD) / SHAPE_MORPH;
-  mix = mix * mix * (3 - 2 * mix);
-  const rot = t * 0.4;                      // whole tunnel turns
-  const twist = Math.sin(t * 0.3) * 0.6;    // deeper rings rotate relative to nearer ones
-
-  for (let i = 0; i < n; i++) {
-    const r = distA[i];
-    const a = angA[i] * TAU - rot - logR[i] * twist;
-    let d = polyDist(r, a, n1);
-    if (mix > 0) d += (polyDist(r, a, n2) - d) * mix;
-    shapeD[i] = d;
-    const v = Math.log(d > 0.003 ? d : 0.003) * RINGS - phase;
-    const band = ((Math.floor(v) % NB) + NB) % NB;
-    const c = pal[band];
-    const R = c[0], G = c[1], B = c[2];
-    buf[i] = (255 << 24) | (Math.min(255, B) << 16) | (Math.min(255, G) << 8) | Math.min(255, R);
-  }
-  for (const ring of rings) {
-    const rr = ring.r, w = ring.w;
+const vortex = {
+  items: [],
+  center: () => ({ x: cx, y: cy }),
+  build(items) { this.items = items.slice(-500); },
+  add(it) { it.seed = (((-flight()) % 1) + 1) % 1; this.items.push(it); }, // launch from the core now
+  remove(t) { this.items = this.items.filter((i) => i.t !== t); },
+  landing: () => ({ x: cx, y: cy, size: 0 }), // dives into the core
+  update(dt) {
+    phase += dt * (1.8 + boost * 5);
+    travel += dt * (1 + boost * 2.5);
+  },
+  // z runs 1 (far, at the core) to 0 (at the camera); perspective makes icons race outward and grow
+  pos(it) {
+    const p = (it.seed + flight()) % 1;
+    const rr = Math.exp(FLY_MIN + p * (FLY_MAX - FLY_MIN)) * maxR;
+    const a = it.seed2 * TAU + p * 1.8 + travel * 0.06;
+    return { x: cx + Math.cos(a) * rr, y: cy + Math.sin(a) * rr, z: 1 - p, f: rr / (maxR * 0.33) };
+  },
+  background(t) {
+    const n = W * H;
+    if (shapeD.length !== n) shapeD = new Float32Array(n);
+    const cols = RING_ROLES.map((r) => rgb32(tri[r]));
+    const cyc = SHAPE_HOLD + SHAPE_MORPH, k = Math.floor(t / cyc), f = t - k * cyc;
+    const n1 = SHAPES[k % SHAPES.length], n2 = SHAPES[(k + 1) % SHAPES.length];
+    let m = f < SHAPE_HOLD ? 0 : (f - SHAPE_HOLD) / SHAPE_MORPH;
+    m = m * m * (3 - 2 * m);
+    const rot = t * 0.4;                      // whole tunnel turns
+    const twist = Math.sin(t * 0.3) * 0.6;    // deeper rings rotate relative to nearer ones
     for (let i = 0; i < n; i++) {
-      const e = Math.abs(shapeD[i] - rr);
-      if (e < w && dith[i] > e / w * 0.9) buf[i] = WHITE;
+      const r = distA[i];
+      const a = angA[i] * TAU - rot - logR[i] * twist;
+      let d = polyDist(r, a, n1);
+      if (m > 0) d += (polyDist(r, a, n2) - d) * m;
+      shapeD[i] = d;
+      const v = Math.log(d > 0.003 ? d : 0.003) * RINGS - phase;
+      buf[i] = cols[((Math.floor(v) % NB) + NB) % NB];
+    }
+    return shapeD;
+  },
+  draw() {
+    const placed = this.items.map((it) => ({ it, ...this.pos(it) }));
+    placed.sort((a, b) => b.z - a.z); // far first so near ones draw on top
+    for (const p of placed) {
+      const size = ICON_SIZE * (0.4 + p.f * 1.1); // a head start near the core, then grow with the rings
+      if (size >= 2) drawSprite(p.it.icon, p.x, p.y, size);
+    }
+  },
+};
+
+// ----- Landscape: a psychedelic valley with a growing pile of icons -----
+// Pile slots on a hex lattice, ordered so each slot rests on two below it.
+const MOUND = (() => {
+  const cells = [];
+  for (let y = 0; y < 40; y++) {
+    for (let x = -40; x <= 40; x++) {
+      const px = x + (y % 2) * 0.5;
+      cells.push({ x: px, y, s: y + Math.abs(px) * 1.15 + hash(x * 31 + y * 7) * 0.01 });
     }
   }
-  ctx.putImageData(img, 0, 0);
+  return cells.sort((a, b) => a.s - b.s);
+})();
+let ridgeFar = new Float32Array(0), ridgeNear = new Float32Array(0);
+const landscape = {
+  items: [], unit: 40, unitTarget: 40,
+  center: () => ({ x: cx, y: H * 0.34 }),
+  ground: () => H * 0.8,
+  build(items) { this.items = items.slice(-900); this.fit(true); },
+  add(it) { this.items.push(it); this.fit(); },
+  remove(t) { this.items = this.items.filter((i) => i.t !== t); this.fit(); },
+  // icon size that keeps the whole mound (plus the next slot) on screen
+  fit(snap) {
+    let mx = 0, my = 0;
+    for (let i = 0; i <= this.items.length; i++) { mx = Math.max(mx, Math.abs(MOUND[i].x)); my = Math.max(my, MOUND[i].y); }
+    this.unitTarget = Math.min(ICON_SIZE * 1.5, (W * 0.92) / (2 * mx + 1), (this.ground() - H * 0.24) / ((my + 1) * 0.87));
+    if (snap) this.unit = this.unitTarget;
+  },
+  slot(i) {
+    const c = MOUND[i], u = this.unit;
+    return { x: cx + c.x * u, y: this.ground() - c.y * u * 0.87 - u * 0.5, size: u * 1.12 };
+  },
+  landing() { return this.slot(this.items.length); },
+  update(dt) { this.unit += (this.unitTarget - this.unit) * Math.min(1, dt * 3); },
+  background(t) {
+    const [dk, lt, ac] = tri;
+    const hz = Math.round(H * 0.6);
+    if (ridgeFar.length !== W) { ridgeFar = new Float32Array(W); ridgeNear = new Float32Array(W); }
+    for (let x = 0; x < W; x++) {
+      ridgeFar[x] = hz - H * (0.1 + Math.sin(x * 0.04 + 1) * 0.04 + Math.sin(x * 0.013) * 0.05 + Math.sin(x * 0.11 + t * 0.5) * 0.012);
+      ridgeNear[x] = hz - H * (0.045 + Math.sin(x * 0.07 + 3) * 0.022 + Math.sin(x * 0.023 + 2) * 0.03);
+    }
+    const sky = [rgb32(mix(dk, ac, 0.3)), rgb32(mix(dk, lt, 0.4)), rgb32(mix(dk, ac, 0.6)), rgb32(mix(dk, lt, 0.68))];
+    const sunTop = rgb32(lt), sunBot = rgb32(ac);
+    const far = rgb32(mix(dk, ac, 0.35)), near = rgb32(mix(dk, lt, 0.1));
+    const fieldA = rgb32(mix(dk, ac, 0.55)), fieldB = rgb32(mix(dk, lt, 0.3)), gridC = rgb32(lt);
+    const sunR = Math.min(W, H) * 0.24, sunX = cx, sunY = hz - H * 0.1;
+    for (let y = 0; y < H; y++) {
+      const row = y * W;
+      if (y < hz) {
+        for (let x = 0; x < W; x++) {
+          let c;
+          if (y >= ridgeNear[x]) c = near;
+          else if (y >= ridgeFar[x]) c = far;
+          else {
+            const dx = x - sunX, dy = y - sunY;
+            if (dx * dx + dy * dy < sunR * sunR) {
+              // striped synth sun: slats widen toward the bottom and scroll down
+              const below = (dy + sunR) / (2 * sunR);
+              const slat = (y + t * 9) % 9 < below * 5 - 1;
+              c = slat ? sky[1] : (below < 0.5 ? sunTop : sunBot);
+            } else {
+              const k = Math.floor(y / hz * 7 + Math.sin(x * 0.045 + t * 0.9 + y * 0.03) * 0.8 - t * 0.7);
+              c = sky[((k % 4) + 4) % 4];
+            }
+          }
+          buf[row + x] = c;
+        }
+      } else {
+        // perspective fields with converging grid lines, rushing toward you
+        const d = y - hz + 1, z = H / d;
+        const stripe = Math.floor(z * 0.6 - t * 3) & 1;
+        const base = stripe ? fieldA : fieldB;
+        for (let x = 0; x < W; x++) {
+          const g = ((x - cx) * 1.8) / d;
+          buf[row + x] = d > 5 && Math.abs(g - Math.round(g)) < 0.05 + 0.5 / d ? gridC : base;
+        }
+      }
+    }
+    return distA;
+  },
+  draw(t) {
+    this.items.forEach((it, i) => {
+      const p = this.slot(i);
+      const bob = Math.sin(t * 5 + it.seed * 9) * boost * 1.5;
+      drawSprite(it.icon, p.x, p.y + bob, p.size, (it.seed - 0.5) * 0.6);
+    });
+  },
+};
+
+// ----- Snake: a self-playing snake that grows by one icon per tap -----
+const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+const snake = {
+  items: [], body: [], prev: [], food: null, cs: 16, cols: 1, rows: 1, ox: 0, oy: 0, acc: 0, tick: 0.13,
+  center: () => ({ x: cx, y: H * 0.4 }),
+  build(items) { this.items = items.slice(-400); this.layout(); },
+  add(it) {
+    this.items.push(it);
+    if (this.cols * this.rows < this.items.length * 2.5) return this.layout();
+    const tail = this.body[this.body.length - 1] || this.mid();
+    this.body.push({ ...tail }); this.prev.push({ ...tail });
+  },
+  remove(t) {
+    const i = this.items.findIndex((x) => x.t === t);
+    if (i < 0) return;
+    this.items.splice(i, 1); this.body.pop(); this.prev.pop();
+  },
+  mid() { return { x: this.cols >> 1, y: this.rows >> 1 }; },
+  // pick a cell size that leaves plenty of room, then coil the snake in a serpentine
+  layout() {
+    const top = 34, bottom = H - 72, areaH = bottom - top, n = this.items.length;
+    let cs = 22;
+    while (cs > 7 && Math.floor(W / cs) * Math.floor(areaH / cs) < n * 2.5) cs--;
+    this.cs = cs; this.cols = Math.floor(W / cs); this.rows = Math.floor(areaH / cs);
+    this.ox = Math.floor((W - this.cols * cs) / 2); this.oy = top + Math.floor((areaH - this.rows * cs) / 2);
+    const path = [];
+    for (let y = this.rows - 1; y >= 0; y--) for (let k = 0; k < this.cols; k++) path.push({ x: (this.rows - 1 - y) % 2 ? this.cols - 1 - k : k, y });
+    this.body = [];
+    for (let i = 0; i < n; i++) this.body.push({ ...path[Math.min(path.length - 1, n - 1 - i)] });
+    this.prev = this.body.map((c) => ({ ...c }));
+    this.placeFood();
+  },
+  placeFood() {
+    const occ = new Set(this.body.map((c) => c.x + ',' + c.y));
+    for (let tries = 0; tries < 200; tries++) {
+      const f = { x: (Math.random() * this.cols) | 0, y: (Math.random() * this.rows) | 0 };
+      if (!occ.has(f.x + ',' + f.y)) { this.food = f; return; }
+    }
+    this.food = this.mid();
+  },
+  inBounds(x, y) { return x >= 0 && y >= 0 && x < this.cols && y < this.rows; },
+  step() {
+    if (!this.body.length) return;
+    const head = this.body[0], key = (x, y) => x + ',' + y;
+    const occ = new Set(this.body.slice(0, -1).map((c) => key(c.x, c.y))); // the tail moves away
+    // breadth-first search to the food
+    const from = new Map([[key(head.x, head.y), null]]), queue = [head];
+    let found = null;
+    while (queue.length && !found) {
+      const c = queue.shift();
+      for (const [dx, dy] of DIRS) {
+        const x = c.x + dx, y = c.y + dy, k = key(x, y);
+        if (!this.inBounds(x, y) || occ.has(k) || from.has(k)) continue;
+        from.set(k, c);
+        if (x === this.food.x && y === this.food.y) { found = { x, y }; break; }
+        queue.push({ x, y });
+      }
+    }
+    let next = null;
+    if (found) {
+      next = found;
+      for (let c = from.get(key(next.x, next.y)); c && c !== head; c = from.get(key(c.x, c.y))) next = c;
+    } else {
+      // no route: take the open neighbour with the most room around it, or any move at all
+      let best = -1;
+      for (const [dx, dy] of DIRS) {
+        const x = head.x + dx, y = head.y + dy;
+        if (!this.inBounds(x, y)) continue;
+        const room = occ.has(key(x, y)) ? -0.5 : DIRS.filter(([ex, ey]) => this.inBounds(x + ex, y + ey) && !occ.has(key(x + ex, y + ey))).length;
+        if (room > best) { best = room; next = { x, y }; }
+      }
+    }
+    if (!next) return;
+    this.prev = this.body.map((c) => ({ ...c }));
+    this.body.unshift({ x: next.x, y: next.y });
+    this.body.pop();
+    if (next.x === this.food.x && next.y === this.food.y) this.placeFood();
+  },
+  update(dt) {
+    this.acc += dt * (1 + boost * 1.5);
+    while (this.acc >= this.tick) { this.acc -= this.tick; this.step(); }
+  },
+  cellXY(c) { return { x: this.ox + (c.x + 0.5) * this.cs, y: this.oy + (c.y + 0.5) * this.cs }; },
+  segPos(i) {
+    const f = this.acc / this.tick, a = this.cellXY(this.prev[i] || this.body[i]), b = this.cellXY(this.body[i]);
+    return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f };
+  },
+  landing() {
+    const i = this.body.length - 1;
+    return { ...(i < 0 ? this.cellXY(this.mid()) : this.segPos(i)), size: this.cs * 1.05 };
+  },
+  background(t) {
+    const [dk, lt, ac] = tri;
+    const out = rgb32(mix(dk, [0, 0, 0], 0.35)), a = rgb32(dk), b = rgb32(mix(dk, lt, 0.08));
+    const food = rgb32(mix(ac, lt, (Math.sin(t * 8) + 1) * 0.25));
+    const { ox, oy, cs, cols, rows } = this;
+    const fx = this.food ? this.food.x : -1, fy = this.food ? this.food.y : -1, pad = Math.max(1, cs >> 2);
+    for (let y = 0; y < H; y++) {
+      const gy = Math.floor((y - oy) / cs), row = y * W;
+      for (let x = 0; x < W; x++) {
+        const gx = Math.floor((x - ox) / cs);
+        let c = out;
+        if (gx >= 0 && gy >= 0 && gx < cols && gy < rows) {
+          c = (gx + gy) & 1 ? a : b;
+          if (gx === fx && gy === fy) {
+            const lx = x - ox - gx * cs, ly = y - oy - gy * cs;
+            if (lx >= pad && ly >= pad && lx < cs - pad && ly < cs - pad) c = food;
+          }
+        }
+        buf[row + x] = c;
+      }
+    }
+    return distA;
+  },
+  draw() {
+    for (let i = this.body.length - 1; i >= 0; i--) { // tail first, head on top
+      const p = this.segPos(i);
+      drawSprite(this.items[i].icon, p.x, p.y, this.cs * (i === 0 ? 1.35 : 1.05));
+    }
+  },
+};
+
+const MODES = { vortex, landscape, snake };
+let MODE = MODES[state.display] || vortex;
+function buildInstances() { MODE.build(state.log.map(toItem)); }
+function setDisplay(name) {
+  state.display = name;
+  saveState();
+  MODE = MODES[name] || vortex;
+  hero = null;
+  buildInstances();
 }
+addEventListener('resize', () => buildInstances());
 
 // Soft drop shadow for each icon, rendered once per sprite and reused.
 const _shadows = new WeakMap();
@@ -222,13 +447,15 @@ function iconShadow(src) {
   return sh;
 }
 
-// An icon centred at (x, y), with its shadow falling down-right onto the tunnel.
-function drawSprite(name, x, y, size) {
+// An icon centred at (x, y), optionally rotated, with its shadow falling down-right.
+function drawSprite(name, x, y, size, rot = 0) {
   const src = iconSprite(name), off = size * 0.07;
+  if (rot) { sctx.save(); sctx.translate(x, y); sctx.rotate(rot); x = 0; y = 0; }
   sctx.globalAlpha = 0.38;
   sctx.drawImage(iconShadow(src), x - size / 2 + off, y - size / 2 + off, size, size);
   sctx.globalAlpha = 1;
   sctx.drawImage(src, x - size / 2, y - size / 2, size, size);
+  if (rot) sctx.restore();
 }
 
 let last = performance.now();
@@ -236,26 +463,27 @@ function frame(ms) {
   const dt = Math.min((ms - last) / 1000, 0.05);
   last = ms;
   const t = ms / 1000;
-  phase += dt * (1.8 + boost * 5); // flight speed into the tunnel (icons fly on their own clock)
-  travel += dt * (1 + boost * 2.5);
   boost = Math.max(0, boost - dt * 0.55);
   rings = rings.filter((r) => (r.r += dt * (0.9 + r.r), r.w = 0.018 + r.r * 0.03, r.r < 1.3));
+  MODE.update(dt);
 
-  drawField(t);
+  evolvePalette(t);
+  const dist = MODE.background(t);
+  const n = W * H;
+  for (const ring of rings) {
+    for (let i = 0; i < n; i++) {
+      const e = Math.abs(dist[i] - ring.r);
+      if (e < ring.w && dith[i] > e / ring.w * 0.9) buf[i] = WHITE;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+
   sctx.setTransform(1, 0, 0, 1, 0, 0);
   sctx.clearRect(0, 0, sprites.width, sprites.height);
   sctx.setTransform(SX, 0, 0, SX, 0, 0); // draw in vortex-pixel units
   sctx.imageSmoothingEnabled = true;
   sctx.imageSmoothingQuality = 'high';
-
-  // Flying icons, far first so near ones draw on top
-  const placed = instances.map((it) => ({ it, ...instPos(it) }));
-  placed.sort((a, b) => b.z - a.z);
-  for (const p of placed) {
-    const size = ICON_SIZE * (0.4 + p.f * 1.1); // a head start near the core, then grow with the rings
-    if (size < 2) continue;
-    drawSprite(p.it.icon, p.x, p.y, size);
-  }
+  MODE.draw(t);
 
   // Confetti
   particles = particles.filter((q) => (q.life -= dt) > 0);
@@ -265,27 +493,22 @@ function frame(ms) {
     ctx.fillRect(Math.round(q.x), Math.round(q.y), q.s, q.s);
   }
 
-  // Hero icon: pops in big, then dives into the core and starts flying out at you
+  // Hero icon: pops in big, then flies to where the mode wants it
   if (hero) {
     const age = t - hero.start;
     const big = ICON_SIZE * Math.max(2, Math.floor(Math.min(W, H) * 0.55 / ICON_SIZE));
-    let s;
+    let x = hero.from.x, y = hero.from.y, s;
     if (age < hero.hold) {
       const k = Math.min(age / 0.35, 1);
       s = big * k * (1 + Math.sin(k * Math.PI * 2.5) * (1 - k) * 0.6);
+      if (age > 0.35) x += Math.sin(age * 9) * 1.5;
     } else {
-      const k = Math.min((age - hero.hold) / 0.45, 1);
-      s = big * (1 - k * k);
-      if (k >= 1) {
-        hero.inst.seed = (((-flight()) % 1) + 1) % 1; // start at the core, right now
-        instances.push(hero.inst);
-        hero = null;
-      }
+      const k = Math.min((age - hero.hold) / 0.5, 1), e = k * k * (3 - 2 * k);
+      const to = MODE.landing();
+      x += (to.x - x) * e; y += (to.y - y) * e; s = big + (to.size - big) * e;
+      if (k >= 1) { MODE.add(hero.inst); hero = null; }
     }
-    if (hero && s >= 1) {
-      const wob = age > 0.35 && age < hero.hold ? Math.sin(age * 9) * 1.5 : 0;
-      drawSprite(hero.icon, cx + wob, cy, s);
-    }
+    if (hero && s >= 1) drawSprite(hero.icon, x, y, s);
   }
   requestAnimationFrame(frame);
 }
@@ -364,11 +587,11 @@ function celebrate(habit, s, newBest) {
   boost = Math.min(1.6, boost + 1 + Math.min(s.combo, 30) / 30);
   rings.push({ r: 0.02, w: 0.02 });
   setTimeout(() => rings.push({ r: 0.02, w: 0.02 }), 140);
-  const n = 90 + Math.min(s.combo, 30) * 6;
+  const n = 90 + Math.min(s.combo, 30) * 6, from = MODE.center();
   for (let i = 0; i < n; i++) {
     const a = Math.random() * Math.PI * 2, sp = 40 + Math.random() * 120;
     particles.push({
-      x: cx, y: cy, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 40,
+      x: from.x, y: from.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 40,
       life: 1 + Math.random() * 1.4, s: Math.random() < 0.25 ? 2 : 1,
       col: RAINBOW[(Math.random() * RAINBOW.length) | 0],
     });
@@ -390,12 +613,9 @@ function tap(habit, btn) {
   const newBest = s.combo > before.best && before.best > 0;
 
   const now = performance.now() / 1000;
-  const inst = { icon: habit.icon, seed: 0, seed2: Math.random(), t: entry.t };
-  if (hero) { // a previous hero still on screen launches from the core immediately
-    hero.inst.seed = (((-flight()) % 1) + 1) % 1;
-    instances.push(hero.inst);
-  }
-  hero = { icon: habit.icon, inst, start: now, hold: 1.5 };
+  const inst = toItem(entry);
+  if (hero) MODE.add(hero.inst); // a previous hero still on screen lands immediately
+  hero = { icon: habit.icon, inst, start: now, hold: 1.5, from: MODE.center() };
 
   celebrate(habit, s, newBest);
   if (btn) { btn.classList.remove('bump'); void btn.offsetWidth; btn.classList.add('bump'); }
@@ -411,7 +631,7 @@ undoEl.querySelector('button').addEventListener('click', () => {
   if (!entry) return;
   saveState();
   if (hero && hero.inst.t === entry.t) hero = null;
-  instances = instances.filter((i) => i.t !== entry.t);
+  else MODE.remove(entry.t);
   celebrateEl.classList.remove('show', 'hot');
   undoEl.hidden = true;
   renderBar();
@@ -483,7 +703,6 @@ const settingsEl = document.getElementById('settings');
 document.getElementById('gear').addEventListener('click', openSettings);
 settingsEl.querySelector('.close').addEventListener('click', () => (settingsEl.hidden = true));
 settingsEl.addEventListener('click', (e) => { if (e.target === settingsEl) settingsEl.hidden = true; });
-document.getElementById('vars-link').href = `https://github.com/${REPO}/settings/variables/actions`;
 
 const soundEl = document.getElementById('sound');
 soundEl.addEventListener('change', () => { state.sound = soundEl.checked; saveState(); });
@@ -495,25 +714,49 @@ musicEl.addEventListener('change', () => {
 });
 
 // ---------- Push notifications ----------
-// The daily "Parsnip?" is sent by a GitHub Action using this device's push
-// subscription, stored in the repo's PUSH_SUBSCRIPTION secret.
+// The app registers this device's push subscription and chosen time with the
+// Parsnip push service (a Cloudflare Worker), which sends the daily "Parsnip?".
+const PUSH_API = 'https://parsnip-push.joshuakernich.workers.dev';
 const VAPID_PUBLIC_KEY = 'BN2swssT80HTByvveACzavE2gUHm9IIViIsLDeY_P2avgEhblqAv5ufg-YrgfNkWvP9992C0uAQMCHxDOSp9Y4U';
 const pushStatus = document.getElementById('push-status');
 const pushEnable = document.getElementById('push-enable');
-const pushLink = document.getElementById('push-link');
-const pushCode = document.getElementById('push-code');
-document.getElementById('push-secret').href = `https://github.com/${REPO}/settings/secrets/actions`;
+const pushOn = document.getElementById('push-on');
+const pushTime = document.getElementById('push-time');
+const pushTimeRow = document.getElementById('push-time-row');
 
 const b64urlToBytes = (s) => {
   const b = atob(s.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (s.length % 4)) % 4));
   return Uint8Array.from(b, (c) => c.charCodeAt(0));
 };
+const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+const pushApi = (path, body) => fetch(PUSH_API + path, {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+}).then((r) => r.json());
+
+async function currentSub() {
+  try {
+    const reg = await navigator.serviceWorker.getRegistration();
+    return reg ? await reg.pushManager.getSubscription() : null;
+  } catch { return null; }
+}
+const notifyTime = () => state.notifyTime || '20:00';
+const timeLabel = (hhmm) => {
+  const [h, m] = hhmm.split(':').map(Number);
+  return new Date(2000, 0, 1, h, m).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+};
+
+// Tell the push service about this device (and its time); safe to repeat.
+async function syncPush(sub) {
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  return pushApi('/subscribe', { subscription: sub.toJSON(), time: notifyTime(), tz });
+}
 
 async function refreshPush() {
   pushEnable.hidden = true;
-  pushLink.hidden = true;
-  const supported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
-  if (!supported) {
+  pushOn.hidden = true;
+  pushTimeRow.hidden = true;
+  pushTime.value = notifyTime();
+  if (!pushSupported()) {
     pushStatus.textContent = /iPhone|iPad/.test(navigator.userAgent) && !standalone
       ? 'Add Parsnip to your Home Screen (Share → Add to Home Screen), open it from there, then turn on notifications.'
       : "This browser can't receive push notifications.";
@@ -523,23 +766,15 @@ async function refreshPush() {
     pushStatus.textContent = 'Notifications are blocked. Allow them in Settings → Notifications → Parsnip.';
     return;
   }
-  let sub = null;
-  try {
-    const reg = await navigator.serviceWorker.getRegistration();
-    if (reg) sub = await reg.pushManager.getSubscription();
-  } catch {}
-  if (!sub || Notification.permission !== 'granted') {
+  pushTimeRow.hidden = false;
+  const sub = await currentSub();
+  if (sub && Notification.permission === 'granted' && state.notifyOn !== false) {
+    pushStatus.textContent = `On: a "Parsnip?" nudge every day at ${timeLabel(notifyTime())}.`;
+    pushOn.hidden = false;
+  } else {
     pushStatus.textContent = 'Get a "Parsnip?" nudge once a day.';
     pushEnable.hidden = false;
-    return;
   }
-  let saved = null;
-  try { saved = localStorage.getItem('parsnip:pushEndpoint'); } catch {}
-  pushStatus.textContent = saved === sub.endpoint
-    ? 'Notifications are on for this device.'
-    : 'Notifications are allowed. One last step:';
-  pushCode.value = JSON.stringify(sub);
-  pushLink.hidden = false;
 }
 
 pushEnable.addEventListener('click', async () => {
@@ -547,22 +782,68 @@ pushEnable.addEventListener('click', async () => {
     if ((await Notification.requestPermission()) !== 'granted') return refreshPush();
     const reg = (await navigator.serviceWorker.getRegistration()) || (await navigator.serviceWorker.register('sw.js'));
     await navigator.serviceWorker.ready;
-    await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64urlToBytes(VAPID_PUBLIC_KEY) });
+    const sub = (await reg.pushManager.getSubscription())
+      || (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64urlToBytes(VAPID_PUBLIC_KEY) }));
+    const res = await syncPush(sub);
+    if (!res.ok) throw new Error(res.error || 'server error');
+    state.notifyOn = true;
+    saveState();
   } catch (e) {
     alert("Couldn't turn on notifications: " + e.message);
   }
   refreshPush();
 });
 
-document.getElementById('push-copy').addEventListener('click', async (e) => {
-  const sub = JSON.parse(pushCode.value);
-  try { await navigator.clipboard.writeText(pushCode.value); } catch { pushCode.select(); document.execCommand('copy'); }
-  try { localStorage.setItem('parsnip:pushEndpoint', sub.endpoint); } catch {}
-  e.target.textContent = 'COPIED!';
-  setTimeout(() => (e.target.textContent = 'COPY CODE'), 1500);
+pushTime.addEventListener('change', async () => {
+  if (!pushTime.value) return;
+  state.notifyTime = pushTime.value;
+  saveState();
+  const sub = await currentSub();
+  if (sub && state.notifyOn !== false) syncPush(sub).catch(() => {});
+  refreshPush();
+});
+
+document.getElementById('push-off').addEventListener('click', async () => {
+  const sub = await currentSub();
+  state.notifyOn = false;
+  saveState();
+  if (sub) {
+    pushApi('/unsubscribe', { endpoint: sub.endpoint }).catch(() => {});
+    await sub.unsubscribe().catch(() => {});
+  }
+  refreshPush();
+});
+
+document.getElementById('push-test').addEventListener('click', async (e) => {
+  const btn = e.target, sub = await currentSub();
+  if (!sub) return refreshPush();
+  btn.textContent = 'SENDING…';
+  try {
+    await syncPush(sub);
+    const res = await pushApi('/test', { endpoint: sub.endpoint });
+    btn.textContent = res.ok ? 'SENT!' : 'FAILED';
+  } catch { btn.textContent = 'FAILED'; }
+  setTimeout(() => (btn.textContent = 'SEND TEST'), 2000);
+});
+
+// Keep the push service up to date each launch (subscriptions can rotate).
+(async () => {
+  if (!pushSupported() || Notification.permission !== 'granted' || state.notifyOn === false) return;
+  const sub = await currentSub();
+  if (sub) syncPush(sub).catch(() => {});
+})();
+
+const displayOpts = document.getElementById('display-opts');
+const showDisplay = () => displayOpts.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(MODE === MODES[b.dataset.mode])));
+displayOpts.addEventListener('click', (e) => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  setDisplay(b.dataset.mode);
+  showDisplay();
 });
 
 function openSettings() {
+  showDisplay();
   soundEl.checked = state.sound;
   musicEl.checked = state.music;
   refreshPush();

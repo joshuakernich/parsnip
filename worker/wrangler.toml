@@ -1,0 +1,18 @@
+name = "parsnip-push"
+main = "src/index.js"
+compatibility_date = "2025-06-01"
+
+# Check for due nudges every minute
+[triggers]
+crons = ["* * * * *"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "parsnip"
+database_id = "e5b51d1c-836c-4acb-9bc7-cd5851e104b5"
+
+[vars]
+VAPID_PUBLIC_KEY = "BN2swssT80HTByvveACzavE2gUHm9IIViIsLDeY_P2avgEhblqAv5ufg-YrgfNkWvP9992C0uAQMCHxDOSp9Y4U"
+VAPID_SUBJECT = "https://joshuakernich.github.io/parsnip/"
+ALLOWED_ORIGINS = "https://joshuakernich.github.io,http://localhost:8517"
+# VAPID_PRIVATE_KEY is a secret: wrangler secret put VAPID_PRIVATE_KEY

@@ -54,6 +54,14 @@
         <button id="add-habit" class="pixbtn wide">+ ADD HABIT</button>
       </section>
       <section>
+        <h3>Display</h3>
+        <div class="row" id="display-opts">
+          <button class="pixbtn" data-mode="vortex">VORTEX</button>
+          <button class="pixbtn" data-mode="landscape">LANDSCAPE</button>
+          <button class="pixbtn" data-mode="snake">SNAKE</button>
+        </div>
+      </section>
+      <section>
         <h3>Sound</h3>
         <label class="toggle"><input type="checkbox" id="music"> Soundtrack</label>
         <label class="toggle"><input type="checkbox" id="sound"> Celebration fanfare</label>
@@ -61,17 +69,12 @@
       <section>
         <h3>Daily nudge</h3>
         <p id="push-status"></p>
+        <label class="toggle" id="push-time-row">Remind me at <input type="time" id="push-time" value="20:00"></label>
         <button id="push-enable" class="pixbtn wide" hidden>TURN ON NOTIFICATIONS</button>
-        <div id="push-link" hidden>
-          <p>Copy this device's code and save it as the <code>PUSH_SUBSCRIPTION</code> secret on GitHub (or paste it to Claude).</p>
-          <textarea id="push-code" readonly rows="3"></textarea>
-          <div class="row">
-            <button id="push-copy" class="pixbtn">COPY CODE</button>
-            <a id="push-secret" class="pixbtn" target="_blank" rel="noopener">GITHUB SECRET</a>
-          </div>
+        <div class="row" id="push-on" hidden>
+          <button id="push-test" class="pixbtn">SEND TEST</button>
+          <button id="push-off" class="pixbtn">TURN OFF</button>
         </div>
-        <p>To change the time, edit <code>PARSNIP_TIME</code> (24h, e.g. <code>20:00</code>) in the repo's
-          <a id="vars-link" target="_blank" rel="noopener">Actions variables</a>.</p>
       </section>
       <section>
         <h3>Backup</h3>

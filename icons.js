@@ -515,6 +515,21 @@ const ICONS = {
   dog: { label: 'Dog' },
   mountain: { label: 'Hike' },
   umbrella: { label: 'Rainy day' },
+  swim: { label: 'Swim' },
+  carrot: { label: 'Veggies' },
+  nophone: { label: 'No phone' },
+  podcast: { label: 'Podcast' },
+  piano: { label: 'Piano' },
+  hoops: { label: 'Hoops' },
+  tennis: { label: 'Tennis' },
+  smoothie: { label: 'Smoothie' },
+  alarm: { label: 'Wake up' },
+  home: { label: 'Home' },
+  gift: { label: 'Kindness' },
+  call: { label: 'Call someone' },
+  brain: { label: 'Learn' },
+  chess: { label: 'Chess' },
+  candle: { label: 'Wind down' },
 };
 
 // ---------- Hi-fi rendering ----------
@@ -571,10 +586,10 @@ function iconPixels(name) {
 }
 
 // ---------- Spritesheet ----------
-// img/sprites.png is a 6x7 sheet (generated with ChatGPT) on a flat magenta
-// background. At load each cell is keyed, trimmed and centred into its own
+// The icon sheets (generated with ChatGPT) sit on a flat magenta background.
+// At load each cell is keyed, trimmed and centred into its own
 // square canvas. Until it loads, icons fall back to the pixel grids above.
-const SHEET = {
+const SHEETS = [{
   src: 'img/sprites.png', cols: 6, rows: 7,
   order: ['parsnip', 'disco', 'jazz', 'water', 'run', 'lift',
     'book', 'sleep', 'apple', 'pill', 'tooth', 'heart',
@@ -583,105 +598,113 @@ const SHEET = {
     'bike', 'smile', 'guitar', 'palette', 'shower', 'salad',
     'camera', 'tree', 'laptop', 'cat', 'rocket', 'trophy',
     'cog', 'bed', 'journal', 'dog', 'mountain', 'umbrella'], // 'cog' is the settings button, not a habit
-};
+}, {
+  src: 'img/sprites2.png', cols: 5, rows: 3,
+  order: ['swim', 'carrot', 'nophone', 'podcast', 'piano',
+    'hoops', 'tennis', 'smoothie', 'alarm', 'home',
+    'gift', 'call', 'brain', 'chess', 'candle'],
+}];
 const SPRITE_PX = 256;
 const _sprites = {};
 
+function sliceSheet(img, sheet) {
+  const c = document.createElement('canvas');
+  c.width = img.naturalWidth; c.height = img.naturalHeight;
+  const cx = c.getContext('2d', { willReadFrequently: true });
+  cx.drawImage(img, 0, 0);
+  const data = cx.getImageData(0, 0, c.width, c.height);
+  const d = data.data;
+  // Key out the magenta background (and its anti-aliased fringe)
+  for (let i = 0; i < d.length; i += 4) {
+    const r = d[i], g = d[i + 1], b = d[i + 2];
+    const bg = (r > 215 && b > 215 && g < 45 && Math.abs(r - b) < 30) // flat magenta
+      || (Math.abs(r - b) < 18 && r - g > 70 && g < 70);               // its darker anti-aliased fringe
+    if (bg) d[i + 3] = 0;
+  }
+  // Despill: pinkish pixels on the edge of the background are leftover anti-aliasing
+  const W = c.width, H = c.height, edge = [];
+  for (let y = 1; y < H - 1; y++) {
+    for (let x = 1; x < W - 1; x++) {
+      const i = (y * W + x) * 4;
+      if (!d[i + 3]) continue;
+      const g = d[i + 1];
+      if (d[i] - g > 40 && d[i + 2] - g > 40 && (!d[i - 1] || !d[i + 7] || !d[i - W * 4 + 3] || !d[i + W * 4 + 3])) edge.push(i);
+    }
+  }
+  for (const i of edge) d[i + 3] = 0;
+  // Label every separate shape on the sheet (8-connected), then give each
+  // shape to the cell containing its centre. Detached parts (rays, steam,
+  // sparkles) stay with their icon and nothing near a cell edge is clipped.
+  const label = new Int32Array(W * H).fill(-1);
+  const comps = []; // { sx, sy, n, x0, y0, x1, y1 }
+  const stack = [];
+  for (let p0 = 0; p0 < W * H; p0++) {
+    if (label[p0] !== -1 || d[p0 * 4 + 3] <= 40) continue;
+    const id = comps.length, cp = { sx: 0, sy: 0, n: 0, x0: W, y0: H, x1: -1, y1: -1 };
+    comps.push(cp);
+    label[p0] = id; stack.push(p0);
+    while (stack.length) {
+      const p = stack.pop(), x = p % W, y = (p - x) / W;
+      cp.sx += x; cp.sy += y; cp.n++;
+      if (x < cp.x0) cp.x0 = x; if (x > cp.x1) cp.x1 = x;
+      if (y < cp.y0) cp.y0 = y; if (y > cp.y1) cp.y1 = y;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = x + dx, ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+          const q = ny * W + nx;
+          if (label[q] === -1 && d[q * 4 + 3] > 40) { label[q] = id; stack.push(q); }
+        }
+      }
+    }
+  }
+  const cw = W / sheet.cols, ch = H / sheet.rows;
+  const cells = sheet.order.map(() => ({ ids: new Set(), x0: W, y0: H, x1: -1, y1: -1 }));
+  comps.forEach((cp, id) => {
+    if (cp.n < 12) return; // stray noise
+    const col = Math.floor(cp.sx / cp.n / cw), row = Math.floor(cp.sy / cp.n / ch);
+    const cell = cells[row * sheet.cols + col];
+    if (!cell) return;
+    cell.ids.add(id);
+    cell.x0 = Math.min(cell.x0, cp.x0); cell.y0 = Math.min(cell.y0, cp.y0);
+    cell.x1 = Math.max(cell.x1, cp.x1); cell.y1 = Math.max(cell.y1, cp.y1);
+  });
+  sheet.order.forEach((name, n) => {
+    const cell = cells[n];
+    if (cell.x1 < 0) return;
+    const bw = cell.x1 - cell.x0 + 1, bh = cell.y1 - cell.y0 + 1;
+    // copy just this icon's shapes
+    const part = new ImageData(bw, bh);
+    for (let y = 0; y < bh; y++) {
+      for (let x = 0; x < bw; x++) {
+        const p = (cell.y0 + y) * W + cell.x0 + x;
+        if (!cell.ids.has(label[p])) continue;
+        const i = p * 4, j = (y * bw + x) * 4;
+        part.data[j] = d[i]; part.data[j + 1] = d[i + 1]; part.data[j + 2] = d[i + 2]; part.data[j + 3] = d[i + 3];
+      }
+    }
+    const tmp = document.createElement('canvas');
+    tmp.width = bw; tmp.height = bh;
+    tmp.getContext('2d').putImageData(part, 0, 0);
+    const k = (SPRITE_PX * 0.9) / Math.max(bw, bh);
+    const s = document.createElement('canvas');
+    s.width = s.height = SPRITE_PX;
+    const sx = s.getContext('2d');
+    sx.imageSmoothingQuality = 'high';
+    sx.drawImage(tmp, (SPRITE_PX - bw * k) / 2, (SPRITE_PX - bh * k) / 2, bw * k, bh * k);
+    _sprites[name] = s;
+  });
+}
+
 function loadSprites() {
-  return new Promise((resolve) => {
+  return Promise.all(SHEETS.map((sheet) => new Promise((resolve) => {
     const img = new Image();
-    img.onload = () => {
-      const c = document.createElement('canvas');
-      c.width = img.naturalWidth; c.height = img.naturalHeight;
-      const cx = c.getContext('2d', { willReadFrequently: true });
-      cx.drawImage(img, 0, 0);
-      const data = cx.getImageData(0, 0, c.width, c.height);
-      const d = data.data;
-      // Key out the magenta background (and its anti-aliased fringe)
-      for (let i = 0; i < d.length; i += 4) {
-        const r = d[i], g = d[i + 1], b = d[i + 2];
-        const bg = (r > 215 && b > 215 && g < 45 && Math.abs(r - b) < 30) // flat magenta
-          || (Math.abs(r - b) < 18 && r - g > 70 && g < 70);               // its darker anti-aliased fringe
-        if (bg) d[i + 3] = 0;
-      }
-      // Despill: pinkish pixels on the edge of the background are leftover anti-aliasing
-      const W = c.width, H = c.height, edge = [];
-      for (let y = 1; y < H - 1; y++) {
-        for (let x = 1; x < W - 1; x++) {
-          const i = (y * W + x) * 4;
-          if (!d[i + 3]) continue;
-          const g = d[i + 1];
-          if (d[i] - g > 40 && d[i + 2] - g > 40 && (!d[i - 1] || !d[i + 7] || !d[i - W * 4 + 3] || !d[i + W * 4 + 3])) edge.push(i);
-        }
-      }
-      for (const i of edge) d[i + 3] = 0;
-      // Label every separate shape on the sheet (8-connected), then give each
-      // shape to the cell containing its centre. Detached parts (rays, steam,
-      // sparkles) stay with their icon and nothing near a cell edge is clipped.
-      const label = new Int32Array(W * H).fill(-1);
-      const comps = []; // { sx, sy, n, x0, y0, x1, y1 }
-      const stack = [];
-      for (let p0 = 0; p0 < W * H; p0++) {
-        if (label[p0] !== -1 || d[p0 * 4 + 3] <= 40) continue;
-        const id = comps.length, cp = { sx: 0, sy: 0, n: 0, x0: W, y0: H, x1: -1, y1: -1 };
-        comps.push(cp);
-        label[p0] = id; stack.push(p0);
-        while (stack.length) {
-          const p = stack.pop(), x = p % W, y = (p - x) / W;
-          cp.sx += x; cp.sy += y; cp.n++;
-          if (x < cp.x0) cp.x0 = x; if (x > cp.x1) cp.x1 = x;
-          if (y < cp.y0) cp.y0 = y; if (y > cp.y1) cp.y1 = y;
-          for (let dy = -1; dy <= 1; dy++) {
-            for (let dx = -1; dx <= 1; dx++) {
-              const nx = x + dx, ny = y + dy;
-              if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
-              const q = ny * W + nx;
-              if (label[q] === -1 && d[q * 4 + 3] > 40) { label[q] = id; stack.push(q); }
-            }
-          }
-        }
-      }
-      const cw = W / SHEET.cols, ch = H / SHEET.rows;
-      const cells = SHEET.order.map(() => ({ ids: new Set(), x0: W, y0: H, x1: -1, y1: -1 }));
-      comps.forEach((cp, id) => {
-        if (cp.n < 12) return; // stray noise
-        const col = Math.floor(cp.sx / cp.n / cw), row = Math.floor(cp.sy / cp.n / ch);
-        const cell = cells[row * SHEET.cols + col];
-        if (!cell) return;
-        cell.ids.add(id);
-        cell.x0 = Math.min(cell.x0, cp.x0); cell.y0 = Math.min(cell.y0, cp.y0);
-        cell.x1 = Math.max(cell.x1, cp.x1); cell.y1 = Math.max(cell.y1, cp.y1);
-      });
-      SHEET.order.forEach((name, n) => {
-        const cell = cells[n];
-        if (cell.x1 < 0) return;
-        const bw = cell.x1 - cell.x0 + 1, bh = cell.y1 - cell.y0 + 1;
-        // copy just this icon's shapes
-        const part = new ImageData(bw, bh);
-        for (let y = 0; y < bh; y++) {
-          for (let x = 0; x < bw; x++) {
-            const p = (cell.y0 + y) * W + cell.x0 + x;
-            if (!cell.ids.has(label[p])) continue;
-            const i = p * 4, j = (y * bw + x) * 4;
-            part.data[j] = d[i]; part.data[j + 1] = d[i + 1]; part.data[j + 2] = d[i + 2]; part.data[j + 3] = d[i + 3];
-          }
-        }
-        const tmp = document.createElement('canvas');
-        tmp.width = bw; tmp.height = bh;
-        tmp.getContext('2d').putImageData(part, 0, 0);
-        const k = (SPRITE_PX * 0.9) / Math.max(bw, bh);
-        const s = document.createElement('canvas');
-        s.width = s.height = SPRITE_PX;
-        const sx = s.getContext('2d');
-        sx.imageSmoothingQuality = 'high';
-        sx.drawImage(tmp, (SPRITE_PX - bw * k) / 2, (SPRITE_PX - bh * k) / 2, bw * k, bh * k);
-        _sprites[name] = s;
-      });
-      _iconCache.clear();
-      resolve(true);
-    };
+    img.onload = () => { sliceSheet(img, sheet); resolve(true); };
     img.onerror = () => resolve(false);
-    img.src = SHEET.src;
+    img.src = sheet.src;
+  }))).then((ok) => {
+    _iconCache.clear();
+    return ok.some(Boolean);
   });
 }
 
