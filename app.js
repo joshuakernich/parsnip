@@ -433,7 +433,7 @@ const landscape = {
       const moving = d.stage === 'fall' || d.stage === 'roll';
       const p = this.toScreen(moving ? { x: d.ax, y: d.ay } : { x: d.x + d.jx, y: d.y + d.jy });
       const bob = Math.sin(t * 5 + it.seed * 9) * boost * 1.5;
-      drawSprite(it.icon, p.x, p.y + bob, d.size * this.unit, d.stage ? d.rotNow : d.rot);
+      drawSprite(it.icon, p.x, p.y + bob, d.size * this.unit, d.stage ? d.rotNow : d.rot, false); // ground shadows only
     });
   },
 };
@@ -614,13 +614,15 @@ function iconShadow(src) {
   return sh;
 }
 
-// An icon centred at (x, y), optionally rotated, with its shadow falling down-right.
-function drawSprite(name, x, y, size, rot = 0) {
+// An icon centred at (x, y), optionally rotated, with (by default) its shadow falling down-right.
+function drawSprite(name, x, y, size, rot = 0, shadow = true) {
   const src = iconSprite(name), off = size * 0.07;
   if (rot) { sctx.save(); sctx.translate(x, y); sctx.rotate(rot); x = 0; y = 0; }
-  sctx.globalAlpha = 0.38;
-  sctx.drawImage(iconShadow(src), x - size / 2 + off, y - size / 2 + off, size, size);
-  sctx.globalAlpha = 1;
+  if (shadow) {
+    sctx.globalAlpha = 0.38;
+    sctx.drawImage(iconShadow(src), x - size / 2 + off, y - size / 2 + off, size, size);
+    sctx.globalAlpha = 1;
+  }
   sctx.drawImage(src, x - size / 2, y - size / 2, size, size);
   if (rot) sctx.restore();
 }
