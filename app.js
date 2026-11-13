@@ -220,14 +220,15 @@ const landscape = {
   build(items) {
     this.items = []; this.discs = []; this.cols = new Map();
     for (const it of items.slice(-900)) this.add(it, true);
+    for (const d of this.discs) delete d.path;
     this.fit(true);
   },
   add(it, quiet) {
     const d = it._spot || this.place(it);
     if (!quiet) {
-      // fall the last stretch, then bounce and settle
-      d.fy = d.y + 1.4; d.vy = -2; d.spin = (it.seed2 - 0.5) * 9;
-      d.rotNow = d.rot + d.spin * 0.25;
+      // drop onto the top of the pile, then tumble down the slope to its spot
+      d.stage = 'fall'; d.ax = d.path[0].x; d.ay = d.path[0].y + 1.6; d.vy = -1;
+      d.seg = 0; d.speed = 1.2; d.rotNow = 0;
     }
     this.items.push(it); this.discs.push(d);
     for (let c = Math.floor(d.x - d.r); c <= Math.floor(d.x + d.r); c++) {
@@ -257,23 +258,29 @@ const landscape = {
   },
   place(it) {
     const r = DISC * (0.85 + it.seed2 * 0.3);
-    // drop point: clustered around the middle (sum of uniforms ≈ bell curve)
-    let x = (it.seed + hash(it.seed * 91.7) + hash(it.seed * 13.1) - 1.5) * 1.5;
+    // always dropped near the middle (sum of uniforms ≈ narrow bell curve)
+    let x = (it.seed + hash(it.seed * 91.7) + hash(it.seed * 13.1) - 1.5) * 0.35;
     let { y, on } = this.restAt(x, r);
-    // a little momentum lets it hop over small bumps before settling
-    let dir = 0, climb = 0.02 + hash(it.seed * 3.3) * 0.06;
-    for (let i = 0; i < 900 && on; i++) {
+    const path = [{ x, y }];
+    // Roll downhill. At each dip, look an icon's width ahead: while the pile is
+    // steeper than about 45° it tumbles on over the bump; once it eases off, it
+    // settles. That keeps the heap tall and steep rather than spread out.
+    // It always tumbles a little way first (minRoll) so every drop visibly rolls.
+    let dir = 0, rolled = 0;
+    const minRoll = 0.2 + hash(it.seed * 2.9) * 0.45;
+    for (let i = 0; i < 1600 && on; i++) {
       const lean = Math.sign(x - on.x) || (it.seed2 > 0.5 ? 1 : -1);
       if (!dir) dir = lean;
       const n = this.restAt(x + dir * 0.025, r);
-      if (n.y > y + 1e-4) {             // uphill: spend momentum, or settle
-        climb -= n.y - y;
-        if (climb < 0) break;
-      }
+      const dip = n.y > y + 1e-4, steep = y - this.restAt(x + dir * 0.7, r).y >= 0.7 * 0.95;
+      if (dip && !steep && rolled >= minRoll) break; // a dip on gentle ground: settled
+      rolled += 0.025;
       x += dir * 0.025; y = n.y; on = n.on;
+      if (i % 3 === 2) path.push({ x, y });
     }
+    path.push({ x, y });
     return {
-      x, y, r,
+      x, y, r, path,
       size: 0.95 + hash(it.seed * 5.9) * 0.35,   // drawn size, much bigger than the collision core
       rot: (hash(it.seed * 7.7) - 0.5) * 1.8,
       jx: 0, jy: 0, jvx: 0, jvy: 0,               // jostle offset (springs back)
@@ -288,25 +295,31 @@ const landscape = {
     if (snap) this.unit = this.unitTarget;
   },
   toScreen(d) { return { x: cx + d.x * this.unit, y: this.ground() - d.y * this.unit }; },
-  // the hero hands over just above the spot; the icon then drops in
+  // the hero hands over above the middle of the pile; the icon then drops in
   landing(it) {
     if (!it) return { x: cx, y: this.ground(), size: this.unit };
     const d = it._spot = it._spot || this.place(it);
-    return { ...this.toScreen({ x: d.x, y: d.y + 1.4 }), size: d.size * this.unit };
+    return { ...this.toScreen({ x: d.path[0].x, y: d.path[0].y + 1.6 }), size: d.size * this.unit };
   },
   update(dt) {
     this.unit += (this.unitTarget - this.unit) * Math.min(1, dt * 3);
     for (const d of this.discs) {
-      if (d.fy !== undefined) {
-        d.vy -= 34 * dt; d.fy += d.vy * dt;
-        d.spin *= Math.pow(0.02, dt);
-        d.rotNow += d.spin * dt; d.rotNow += (d.rot - d.rotNow) * Math.min(1, dt * 6);
-        if (d.fy <= d.y) {
-          if (d.vy < -2.5) {
-            this.jostle(d, -d.vy);
-            d.fy = d.y; d.vy = -d.vy * 0.32; // bounce
-          } else { delete d.fy; }
+      if (d.stage === 'fall') {
+        d.vy -= 34 * dt; d.ay += d.vy * dt;
+        if (d.ay <= d.path[0].y) { d.ay = d.path[0].y; d.stage = 'roll'; this.jostle(d, -d.vy * 0.6); }
+      } else if (d.stage === 'roll') {
+        // tumble along the path, picking up speed, spinning as it goes
+        d.speed = Math.min(7, d.speed + dt * 10);
+        let move = d.speed * dt;
+        while (move > 0 && d.seg < d.path.length - 1) {
+          const to = d.path[d.seg + 1], dx = to.x - d.ax, dy = to.y - d.ay, dist = Math.hypot(dx, dy);
+          if (dist <= move) { d.ax = to.x; d.ay = to.y; d.seg++; move -= dist; d.rotNow += Math.sign(dx) * dist * 2.2; continue; }
+          d.ax += dx / dist * move; d.ay += dy / dist * move; d.rotNow += Math.sign(dx) * move * 2.2; move = 0;
         }
+        if (d.seg >= d.path.length - 1) { d.stage = 'settle'; this.jostle(d, d.speed * 0.8); }
+      } else if (d.stage === 'settle') {
+        d.rotNow += (d.rot - d.rotNow) * Math.min(1, dt * 12);
+        if (Math.abs(d.rot - d.rotNow) < 0.01) { delete d.stage; delete d.path; }
       }
       if (d.jx || d.jy || d.jvx || d.jvy) {
         // damped spring back to rest
@@ -378,9 +391,10 @@ const landscape = {
   draw(t) {
     this.items.forEach((it, i) => {
       const d = this.discs[i];
-      const p = this.toScreen({ x: d.x + d.jx, y: (d.fy ?? d.y) + d.jy });
+      const moving = d.stage === 'fall' || d.stage === 'roll';
+      const p = this.toScreen(moving ? { x: d.ax, y: d.ay } : { x: d.x + d.jx, y: d.y + d.jy });
       const bob = Math.sin(t * 5 + it.seed * 9) * boost * 1.5;
-      drawSprite(it.icon, p.x, p.y + bob, d.size * this.unit, d.fy !== undefined ? d.rotNow : d.rot);
+      drawSprite(it.icon, p.x, p.y + bob, d.size * this.unit, d.stage ? d.rotNow : d.rot);
     });
   },
 };
