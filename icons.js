@@ -615,29 +615,66 @@ function loadSprites() {
         }
       }
       for (const i of edge) d[i + 3] = 0;
-      cx.putImageData(data, 0, 0);
-      const cw = c.width / SHEET.cols, ch = c.height / SHEET.rows;
-      SHEET.order.forEach((name, n) => {
-        const x0 = Math.round((n % SHEET.cols) * cw), y0 = Math.round(Math.floor(n / SHEET.cols) * ch);
-        const w = Math.round(cw), h = Math.round(ch);
-        const m = Math.round(Math.min(cw, ch) * 0.08); // skip the cell edges, where neighbours' outlines can bleed in
-        let minX = w, minY = h, maxX = -1, maxY = -1;
-        for (let y = m; y < h - m; y++) {
-          for (let x = m; x < w - m; x++) {
-            if (d[((y0 + y) * c.width + x0 + x) * 4 + 3] > 40) {
-              if (x < minX) minX = x; if (x > maxX) maxX = x;
-              if (y < minY) minY = y; if (y > maxY) maxY = y;
+      // Label every separate shape on the sheet (8-connected), then give each
+      // shape to the cell containing its centre. Detached parts (rays, steam,
+      // sparkles) stay with their icon and nothing near a cell edge is clipped.
+      const label = new Int32Array(W * H).fill(-1);
+      const comps = []; // { sx, sy, n, x0, y0, x1, y1 }
+      const stack = [];
+      for (let p0 = 0; p0 < W * H; p0++) {
+        if (label[p0] !== -1 || d[p0 * 4 + 3] <= 40) continue;
+        const id = comps.length, cp = { sx: 0, sy: 0, n: 0, x0: W, y0: H, x1: -1, y1: -1 };
+        comps.push(cp);
+        label[p0] = id; stack.push(p0);
+        while (stack.length) {
+          const p = stack.pop(), x = p % W, y = (p - x) / W;
+          cp.sx += x; cp.sy += y; cp.n++;
+          if (x < cp.x0) cp.x0 = x; if (x > cp.x1) cp.x1 = x;
+          if (y < cp.y0) cp.y0 = y; if (y > cp.y1) cp.y1 = y;
+          for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+              const nx = x + dx, ny = y + dy;
+              if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+              const q = ny * W + nx;
+              if (label[q] === -1 && d[q * 4 + 3] > 40) { label[q] = id; stack.push(q); }
             }
           }
         }
-        if (maxX < 0) return;
-        const bw = maxX - minX + 1, bh = maxY - minY + 1;
+      }
+      const cw = W / SHEET.cols, ch = H / SHEET.rows;
+      const cells = SHEET.order.map(() => ({ ids: new Set(), x0: W, y0: H, x1: -1, y1: -1 }));
+      comps.forEach((cp, id) => {
+        if (cp.n < 12) return; // stray noise
+        const col = Math.floor(cp.sx / cp.n / cw), row = Math.floor(cp.sy / cp.n / ch);
+        const cell = cells[row * SHEET.cols + col];
+        if (!cell) return;
+        cell.ids.add(id);
+        cell.x0 = Math.min(cell.x0, cp.x0); cell.y0 = Math.min(cell.y0, cp.y0);
+        cell.x1 = Math.max(cell.x1, cp.x1); cell.y1 = Math.max(cell.y1, cp.y1);
+      });
+      SHEET.order.forEach((name, n) => {
+        const cell = cells[n];
+        if (cell.x1 < 0) return;
+        const bw = cell.x1 - cell.x0 + 1, bh = cell.y1 - cell.y0 + 1;
+        // copy just this icon's shapes
+        const part = new ImageData(bw, bh);
+        for (let y = 0; y < bh; y++) {
+          for (let x = 0; x < bw; x++) {
+            const p = (cell.y0 + y) * W + cell.x0 + x;
+            if (!cell.ids.has(label[p])) continue;
+            const i = p * 4, j = (y * bw + x) * 4;
+            part.data[j] = d[i]; part.data[j + 1] = d[i + 1]; part.data[j + 2] = d[i + 2]; part.data[j + 3] = d[i + 3];
+          }
+        }
+        const tmp = document.createElement('canvas');
+        tmp.width = bw; tmp.height = bh;
+        tmp.getContext('2d').putImageData(part, 0, 0);
         const k = (SPRITE_PX * 0.9) / Math.max(bw, bh);
         const s = document.createElement('canvas');
         s.width = s.height = SPRITE_PX;
         const sx = s.getContext('2d');
         sx.imageSmoothingQuality = 'high';
-        sx.drawImage(c, x0 + minX, y0 + minY, bw, bh, (SPRITE_PX - bw * k) / 2, (SPRITE_PX - bh * k) / 2, bw * k, bh * k);
+        sx.drawImage(tmp, (SPRITE_PX - bw * k) / 2, (SPRITE_PX - bh * k) / 2, bw * k, bh * k);
         _sprites[name] = s;
       });
       _iconCache.clear();

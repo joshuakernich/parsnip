@@ -139,23 +139,29 @@ function instPos(it) {
   return { x: cx + Math.cos(a) * rr, y: cy + Math.sin(a) * rr, z, f };
 }
 
-// Band colours drift continuously: the hue base rotates, the spacing between
-// bands breathes, and saturation/lightness wander, so the palette never repeats exactly.
+// Curated warp palettes: [dark, light, accent]. Rings run dark, light, dark,
+// light, dark, accent. Each palette holds for a while, then crossfades to the next.
+const PALETTES = [
+  ['#1b1340', '#ffb38a', '#ff5f7e'], // midnight peach
+  ['#0b2545', '#8de4ff', '#13c4a3'], // ocean
+  ['#3b0a45', '#ffd166', '#ef476f'], // sunset
+  ['#0f3d3e', '#b8f2e6', '#ffa69e'], // mint
+  ['#2d1b69', '#e0c3fc', '#8ec5fc'], // lilac
+  ['#1b3a2b', '#d8f3dc', '#f4a261'], // forest
+  ['#4a0d3a', '#ffd6e8', '#ff7ab6'], // bubblegum
+  ['#2b2d42', '#fdf0a6', '#4cc9f0'], // lemon
+].map((p) => p.map((h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16))));
+const RING_ROLES = [0, 1, 0, 1, 0, 2];
+const PAL_HOLD = 5, PAL_FADE = 1.5;
 const pal = Array.from({ length: NB }, () => [0, 0, 0]);
-function hsl(h, s, l, out) {
-  h = ((h % 360) + 360) % 360 / 60;
-  const c = (1 - Math.abs(2 * l - 1)) * s, x = c * (1 - Math.abs((h % 2) - 1)), m = l - c / 2;
-  const [r, g, b] = h < 1 ? [c, x, 0] : h < 2 ? [x, c, 0] : h < 3 ? [0, c, x] : h < 4 ? [0, x, c] : h < 5 ? [x, 0, c] : [c, 0, x];
-  out[0] = (r + m) * 255; out[1] = (g + m) * 255; out[2] = (b + m) * 255;
-}
 function evolvePalette(t) {
-  const base = t * 9 + Math.sin(t * 0.05) * 120;
-  const spread = 48 + Math.sin(t * 0.071) * 34 + Math.sin(t * 0.023) * 20;
+  const cyc = PAL_HOLD + PAL_FADE, k = Math.floor(t / cyc), f = t - k * cyc;
+  const A = PALETTES[k % PALETTES.length], B = PALETTES[(k + 1) % PALETTES.length];
+  let m = f < PAL_HOLD ? 0 : (f - PAL_HOLD) / PAL_FADE;
+  m = m * m * (3 - 2 * m);
   for (let i = 0; i < NB; i++) {
-    const h = base + i * spread + Math.sin(t * 0.37 + i * 1.7) * 14;
-    const s = 0.72 + 0.22 * Math.sin(t * 0.11 + i);
-    const l = (i % 2 ? 0.74 : 0.2) + 0.05 * Math.sin(t * 0.17 + i * 2.3);
-    hsl(h, s, l, pal[i]);
+    const a = A[RING_ROLES[i]], b = B[RING_ROLES[i]];
+    for (let c = 0; c < 3; c++) pal[i][c] = a[c] + (b[c] - a[c]) * m;
   }
 }
 
@@ -167,7 +173,7 @@ function polyDist(r, a, n) {
 
 let shapeD = new Float32Array(0);
 function drawField(t) {
-  evolvePalette(t * 3);
+  evolvePalette(t);
   const n = W * H;
   if (shapeD.length !== n) shapeD = new Float32Array(n);
 
