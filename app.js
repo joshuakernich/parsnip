@@ -5,11 +5,7 @@ const STORE_KEY = 'parsnip:v1';
 
 // ---------- State ----------
 const defaultState = () => ({
-  habits: [
-    { id: 'parsnip', name: 'Parsnip', icon: 'parsnip' },
-    { id: 'disco', name: 'Disco', icon: 'disco' },
-    { id: 'jazz', name: 'Jazz', icon: 'jazz' },
-  ],
+  habits: [], // new users start with none and add their own
   log: [], // { h: habitId, t: epoch ms }
   sound: true,
   music: true,
