@@ -388,7 +388,46 @@ const landscape = {
     }
     return distA;
   },
+  // Shadows on the ground. The sun is behind the pile, so each icon's shadow is
+  // squashed onto the ground plane and stretched toward the viewer. Everything is
+  // drawn into one layer first so overlapping shadows don't darken each other.
+  drawShadows() {
+    const u = this.unit, g = this.ground();
+    if (!this.discs.length) return;
+    if (!this.shadowCv || this.shadowCv.width !== sprites.width || this.shadowCv.height !== sprites.height) {
+      this.shadowCv = document.createElement('canvas');
+      this.shadowCv.width = sprites.width; this.shadowCv.height = sprites.height;
+    }
+    const sc = this.shadowCv.getContext('2d');
+    sc.setTransform(1, 0, 0, 1, 0, 0);
+    sc.clearRect(0, 0, this.shadowCv.width, this.shadowCv.height);
+    sc.setTransform(SX, 0, 0, SX, 0, 0);
+    let minX = Infinity, maxX = -Infinity;
+    this.items.forEach((it, i) => {
+      const d = this.discs[i], moving = d.stage === 'fall' || d.stage === 'roll';
+      const x = moving ? d.ax : d.x + d.jx, y = moving ? d.ay : d.y + d.jy;
+      const size = d.size * u, src = iconShadow(iconSprite(it.icon));
+      const sx = cx + (x + y * 0.1) * u, sy = g + y * u * 0.16; // projected toward the viewer
+      sc.drawImage(src, sx - size * 0.55, sy - size * 0.16, size * 1.1, size * 0.32);
+      minX = Math.min(minX, x - d.size / 2); maxX = Math.max(maxX, x + d.size / 2);
+    });
+    // soft contact patch where the pile meets the ground
+    const mx = cx + (minX + maxX) / 2 * u, rx = (maxX - minX) / 2 * u * 1.15, ry = u * 0.6;
+    sc.save();
+    sc.translate(mx, g); sc.scale(1, ry / rx);
+    const grad = sc.createRadialGradient(0, 0, 0, 0, 0, rx);
+    grad.addColorStop(0, 'rgba(0,0,0,0.9)'); grad.addColorStop(1, 'rgba(0,0,0,0)');
+    sc.fillStyle = grad;
+    sc.fillRect(-rx, -rx, rx * 2, rx * 2);
+    sc.restore();
+    sctx.save();
+    sctx.setTransform(1, 0, 0, 1, 0, 0);
+    sctx.globalAlpha = 0.62;
+    sctx.drawImage(this.shadowCv, 0, 0);
+    sctx.restore();
+  },
   draw(t) {
+    this.drawShadows();
     this.items.forEach((it, i) => {
       const d = this.discs[i];
       const moving = d.stage === 'fall' || d.stage === 'roll';
