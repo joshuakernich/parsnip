@@ -222,7 +222,14 @@ html, body {
   text-shadow: 1px 1px 0 #000;
   text-transform: uppercase;
 }
-.habit.add { font: 28px var(--font); color: var(--ink-dim); background: rgba(14, 6, 28, .4); }
+.habit.add { background: rgba(14, 6, 28, .4); }
+/* a crisp, even plus built from two bars */
+.habit.add::before, .habit.add::after {
+  content: ''; position: absolute; left: 50%; top: 50%;
+  width: 28px; height: 6px; margin: -3px 0 0 -14px;
+  background: var(--ink-dim);
+}
+.habit.add::after { transform: rotate(90deg); }
 
 /* ----- Sheets ----- */
 .sheet {

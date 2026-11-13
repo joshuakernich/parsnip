@@ -207,6 +207,34 @@ function drawField(t) {
   ctx.putImageData(img, 0, 0);
 }
 
+// Soft drop shadow for each icon, rendered once per sprite and reused.
+const _shadows = new WeakMap();
+function iconShadow(src) {
+  let sh = _shadows.get(src);
+  if (!sh) {
+    sh = document.createElement('canvas');
+    sh.width = src.width; sh.height = src.height;
+    const g = sh.getContext('2d');
+    g.filter = `blur(${Math.round(src.width * 0.025)}px)`;
+    g.drawImage(src, 0, 0);
+    g.filter = 'none';
+    g.globalCompositeOperation = 'source-in';
+    g.fillStyle = '#000';
+    g.fillRect(0, 0, sh.width, sh.height);
+    _shadows.set(src, sh);
+  }
+  return sh;
+}
+
+// An icon centred at (x, y), with its shadow falling down-right onto the tunnel.
+function drawSprite(name, x, y, size) {
+  const src = iconSprite(name), off = size * 0.07;
+  sctx.globalAlpha = 0.38;
+  sctx.drawImage(iconShadow(src), x - size / 2 + off, y - size / 2 + off, size, size);
+  sctx.globalAlpha = 1;
+  sctx.drawImage(src, x - size / 2, y - size / 2, size, size);
+}
+
 let last = performance.now();
 function frame(ms) {
   const dt = Math.min((ms - last) / 1000, 0.05);
@@ -228,12 +256,10 @@ function frame(ms) {
   const placed = instances.map((it) => ({ it, ...instPos(it) }));
   placed.sort((a, b) => b.z - a.z);
   for (const p of placed) {
-    const size = ICON_SIZE * p.f * 0.75;
+    const size = ICON_SIZE * (0.4 + p.f * 1.1); // a head start near the core, then grow with the rings
     if (size < 2) continue;
-    sctx.globalAlpha = Math.min(1, (1 - p.z) / 0.12);
-    sctx.drawImage(iconSprite(p.it.icon), p.x - size / 2, p.y - size / 2, size, size);
+    drawSprite(p.it.icon, p.x, p.y, size);
   }
-  sctx.globalAlpha = 1;
 
   // Confetti
   particles = particles.filter((q) => (q.life -= dt) > 0);
@@ -262,7 +288,7 @@ function frame(ms) {
     }
     if (hero && s >= 1) {
       const wob = age > 0.35 && age < hero.hold ? Math.sin(age * 9) * 1.5 : 0;
-      sctx.drawImage(iconSprite(hero.icon), cx - s / 2 + wob, cy - s / 2, s, s);
+      drawSprite(hero.icon, cx + wob, cy, s);
     }
   }
   requestAnimationFrame(frame);
@@ -438,7 +464,6 @@ function renderBar() {
   }
   const add = document.createElement('button');
   add.className = 'habit add';
-  add.textContent = '+';
   add.setAttribute('aria-label', 'Add habit');
   add.addEventListener('click', () => openEditor(null));
   bar.append(add);
