@@ -1,5 +1,5 @@
-// Stale-while-revalidate: open instantly from cache, refresh in the background.
-const CACHE = 'parsnip-v2';
+// App files: network first so updates show immediately, cache when offline. Fonts: cache first.
+const CACHE = 'parsnip-v3';
 const SHELL = [
   './', 'index.html', 'style.css', 'app.js', 'icons.js', 'manifest.webmanifest',
   'img/icon-192.png', 'img/icon-512.png', 'img/apple-touch-icon.png',
@@ -25,11 +25,17 @@ self.addEventListener('fetch', (e) => {
   if (!cacheable) return;
   e.respondWith(
     caches.open(CACHE).then(async (cache) => {
-      const cached = await cache.match(req, { ignoreSearch: url.origin === location.origin });
-      const fresh = fetch(req)
-        .then((res) => { if (res.ok || res.type === 'opaque') cache.put(req, res.clone()); return res; })
-        .catch(() => cached);
-      return cached || fresh;
+      const own = url.origin === location.origin;
+      const cached = await cache.match(req, { ignoreSearch: own });
+      if (!own && cached) return cached;
+      try {
+        const res = await fetch(req);
+        if (res.ok || res.type === 'opaque') cache.put(req, res.clone());
+        return res;
+      } catch (err) {
+        if (cached) return cached;
+        throw err;
+      }
     })
   );
 });

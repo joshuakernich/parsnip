@@ -3,7 +3,7 @@
   --ink: #fff;
   --ink-dim: #c9b8e8;
   --panel: #1e1033;
-  --panel-edge: #0a0414;
+  --btn: #342058;
   --accent: #ffd93b;
   --danger: #ef3b4f;
   --go: #2ee06a;
@@ -48,47 +48,37 @@ html, body {
   80% { transform: translate(3px, 6px); }
 }
 
-/* Pixel-art buttons: stepped borders made from box-shadows */
+/* Flat buttons */
 .pixbtn {
   font: inherit;
   font-size: 11px;
   color: var(--ink);
-  background: var(--panel);
+  background: var(--btn);
   border: 0;
-  padding: 10px 12px;
+  padding: 12px 12px;
   cursor: pointer;
-  box-shadow:
-    0 -3px 0 0 var(--panel-edge), 0 3px 0 0 var(--panel-edge),
-    -3px 0 0 0 var(--panel-edge), 3px 0 0 0 var(--panel-edge),
-    inset -3px -3px 0 0 rgba(0,0,0,.35), inset 3px 3px 0 0 rgba(255,255,255,.18);
   display: inline-flex;
   align-items: center;
   justify-content: center;
 }
-.pixbtn:active { transform: translateY(2px); }
+.pixbtn:active { filter: brightness(1.25); }
 .pixbtn.wide { width: 100%; margin-top: 10px; }
 .pixbtn.danger { background: var(--danger); }
 .pixbtn.go { background: var(--go); color: #08240f; }
 
-#hud {
+#gear {
   position: fixed;
-  top: calc(var(--safe-t) + 10px);
-  left: 16px;
-  right: 16px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  pointer-events: none;
+  top: calc(var(--safe-t) + 6px);
+  right: 6px;
   z-index: 3;
+  padding: 10px;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  filter: drop-shadow(2px 2px 0 rgba(0,0,0,.6));
 }
-#hud > * { pointer-events: auto; }
-.logo {
-  font-size: 12px;
-  letter-spacing: 2px;
-  text-shadow: 2px 2px 0 #000;
-  opacity: .85;
-}
-.icon-btn { font-size: 16px; padding: 6px 8px; font-family: system-ui, sans-serif; }
+#gear canvas { width: 24px; height: 24px; image-rendering: pixelated; display: block; }
+#gear:active { opacity: .6; }
 
 #install-tip {
   position: fixed;
@@ -97,7 +87,6 @@ html, body {
   right: 16px;
   z-index: 3;
   background: rgba(10, 4, 20, .85);
-  border: 3px solid #000;
   font-size: 9px;
   line-height: 1.6;
   padding: 8px 36px 8px 10px;
@@ -206,28 +195,21 @@ html, body {
 .habit {
   position: relative;
   flex: 0 0 auto;
-  width: 76px;
-  height: 76px;
+  width: 80px;
+  height: 80px;
   padding: 0;
   border: 0;
-  background: #2a1745;
+  background: rgba(14, 6, 28, .62);
   cursor: pointer;
-  box-shadow:
-    0 -4px 0 0 #000, 0 4px 0 0 #000, -4px 0 0 0 #000, 4px 0 0 0 #000,
-    inset -4px -4px 0 0 rgba(0,0,0,.4), inset 4px 4px 0 0 rgba(255,255,255,.18);
-  transition: transform .08s steps(2);
 }
-.habit canvas { width: 48px; height: 48px; image-rendering: pixelated; display: block; margin: auto; }
-.habit.done { background: #4a2a78; box-shadow:
-    0 -4px 0 0 var(--accent), 0 4px 0 0 var(--accent), -4px 0 0 0 var(--accent), 4px 0 0 0 var(--accent),
-    inset -4px -4px 0 0 rgba(0,0,0,.4), inset 4px 4px 0 0 rgba(255,255,255,.22); }
+.habit canvas { width: 64px; height: 64px; image-rendering: pixelated; display: block; margin: auto; }
+.habit.done { background: rgba(255, 255, 255, .26); box-shadow: inset 0 -4px 0 var(--accent); }
 .habit.bump { animation: bump .35s steps(5); }
 @keyframes bump { 0% { transform: scale(.8); } 50% { transform: scale(1.18) translateY(-8px); } 100% { transform: scale(1); } }
 .habit .badge {
   position: absolute; right: -8px; top: -10px;
   min-width: 22px; padding: 4px 4px 3px;
   font: 9px var(--font); color: #08240f; background: var(--go);
-  box-shadow: 0 -2px 0 #000, 0 2px 0 #000, -2px 0 0 #000, 2px 0 0 #000;
 }
 .habit .badge:empty { display: none; }
 .habit .name {
@@ -236,7 +218,7 @@ html, body {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   text-shadow: 1px 1px 0 #000;
 }
-.habit.add { font: 28px var(--font); color: var(--ink-dim); background: rgba(42,23,69,.6); }
+.habit.add { font: 28px var(--font); color: var(--ink-dim); background: rgba(14, 6, 28, .4); }
 
 /* ----- Sheets ----- */
 .sheet {
@@ -252,8 +234,6 @@ html, body {
   overflow-y: auto;
   background: var(--panel);
   padding: 20px 16px calc(var(--safe-b) + 20px);
-  border-top: 4px solid #000;
-  box-shadow: inset 0 4px 0 rgba(255,255,255,.12);
   -webkit-user-select: text;
   user-select: text;
 }
@@ -279,7 +259,7 @@ a.pixbtn { text-decoration: none; color: var(--ink); }
 #push-code {
   width: 100%; margin-top: 4px;
   font: 10px ui-monospace, monospace; color: var(--ink-dim);
-  background: #0f0820; border: 3px solid #000; padding: 8px; resize: none;
+  background: #0f0820; border: 0; padding: 8px; resize: none;
 }
 
 .toggle {font-family: system-ui, sans-serif; font-size: 14px; display: flex; gap: 8px; align-items: center; }
@@ -289,7 +269,7 @@ a.pixbtn { text-decoration: none; color: var(--ink); }
 .field input {
   display: block; width: 100%; margin-top: 8px;
   font: 14px var(--font); color: var(--ink);
-  background: #0f0820; border: 3px solid #000; padding: 10px;
+  background: #0f0820; border: 0; padding: 10px;
 }
 
 #icon-grid {
@@ -298,9 +278,9 @@ a.pixbtn { text-decoration: none; color: var(--ink); }
   gap: 10px;
 }
 #icon-grid button {
-  background: #2a1745; border: 3px solid #000; padding: 4px; cursor: pointer;
+  background: var(--btn); border: 0; padding: 6px 4px; cursor: pointer;
   display: flex; flex-direction: column; align-items: center; gap: 4px;
   font: 6px var(--font); color: var(--ink-dim);
 }
-#icon-grid button canvas { width: 40px; height: 40px; image-rendering: pixelated; }
-#icon-grid button[aria-selected="true"] { border-color: var(--accent); background: #4a2a78; color: #fff; }
+#icon-grid button canvas { width: 48px; height: 48px; image-rendering: pixelated; }
+#icon-grid button[aria-selected="true"] { background: #6a42a8; box-shadow: inset 0 -4px 0 var(--accent); color: #fff; }

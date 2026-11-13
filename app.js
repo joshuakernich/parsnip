@@ -56,29 +56,25 @@ function statsFor(hid, log = state.log) {
 }
 
 // ---------- Vortex renderer ----------
-const PX = 3; // screen pixels per vortex pixel
 const canvas = document.getElementById('vortex');
 const ctx = canvas.getContext('2d');
 
+// Confetti colours
 const RAINBOW = ['#ff2a4d', '#ff6a1f', '#ffb21f', '#ffe83a', '#9cf23a', '#2ee06a',
   '#22e0c8', '#29a8ff', '#3d5bff', '#7a3dff', '#c03dff', '#ff3dc0'];
-const SHADES = [0.16, 0.34, 0.6, 0.85, 1.0];
-const NB = RAINBOW.length, NS = SHADES.length;
-const LUT = new Uint32Array(NB * NS);
-RAINBOW.forEach((hex, i) => {
-  const r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16);
-  SHADES.forEach((s, j) => {
-    LUT[i * NS + j] = (255 << 24) | (Math.round(b * s) << 16) | (Math.round(g * s) << 8) | Math.round(r * s);
-  });
-});
-const VOID = (255 << 24) | (0x14 << 16) | (0x04 << 8) | 0x0a;
 const WHITE = 0xffffffff;
 const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5].map((v) => (v + 0.5) / 16);
 
+// Spiral shape: NB thick bands per arm cycle. Inside BLUE_R the bands swirl into an atmospheric blue.
+const NB = 6, ARMS = 3, TWIST = 0.8, BLUE_R = 0.5;
+const DEEP = [10, 34, 104], SKY = [64, 156, 255], MIST = [214, 240, 255];
+
+let PX = 2; // screen pixels per vortex pixel
 let W = 0, H = 0, cx = 0, cy = 0, maxR = 1;
 let img, buf, angA, logR, distA, dith;
 
 function resize() {
+  PX = Math.max(2, Math.round(Math.max(innerWidth, innerHeight) / 520));
   W = Math.ceil(innerWidth / PX);
   H = Math.ceil(innerHeight / PX);
   canvas.width = W;
@@ -104,8 +100,9 @@ function resize() {
 addEventListener('resize', resize);
 resize();
 
-const ARMS = 3, TWIST = 1.7, PERIOD = 70; // PERIOD: seconds for an icon to spiral from rim to core
+const FLY = 11;    // seconds for an icon to travel from the core past the camera
 let phase = 0;     // spiral rotation, advances faster during celebrations
+let travel = 0;    // flight clock, also sped up by celebrations
 let boost = 0;     // celebration energy, decays to 0
 let rings = [];    // expanding shockwave rings { r, w }
 let particles = [];
@@ -119,25 +116,59 @@ function buildInstances() {
   instances = recent.map((e) => ({ icon: (habitById(e.h) || {}).icon || 'star', seed: hash(e.t % 1e7), seed2: hash((e.t % 1e7) + 7.3), t: e.t }));
 }
 
-// Position of a vortex instance at time `now` (seconds).
-function instPos(it, now) {
-  const p = (it.seed + now / PERIOD) % 1;
-  const rn = Math.pow(1 - p, 1.25);
-  const a = it.seed2 * Math.PI * 2 - Math.log(Math.max(rn, 0.02)) * TWIST * 0.9 + phase * 0.9;
-  return { x: cx + Math.cos(a) * rn * maxR * 0.92, y: cy + Math.sin(a) * rn * maxR * 0.92, rn };
+// Where an instance is on its flight out of the core. z runs 1 (far, at the
+// core) to 0 (at the camera); perspective makes it race outward and grow.
+function instPos(it) {
+  const p = (it.seed + travel / FLY) % 1;
+  const z = 1 - p;
+  const f = 0.1 / (z + 0.025);
+  const a = it.seed2 * Math.PI * 2 + p * 1.8 + phase * 0.25;
+  const rr = f * maxR * 0.33;
+  return { x: cx + Math.cos(a) * rr, y: cy + Math.sin(a) * rr, z, f };
+}
+
+// Band colours drift continuously: the hue base rotates, the spacing between
+// bands breathes, and saturation/lightness wander, so the palette never repeats exactly.
+const pal = Array.from({ length: NB }, () => [0, 0, 0]);
+function hsl(h, s, l, out) {
+  h = ((h % 360) + 360) % 360 / 60;
+  const c = (1 - Math.abs(2 * l - 1)) * s, x = c * (1 - Math.abs((h % 2) - 1)), m = l - c / 2;
+  const [r, g, b] = h < 1 ? [c, x, 0] : h < 2 ? [x, c, 0] : h < 3 ? [0, c, x] : h < 4 ? [0, x, c] : h < 5 ? [x, 0, c] : [c, 0, x];
+  out[0] = (r + m) * 255; out[1] = (g + m) * 255; out[2] = (b + m) * 255;
+}
+function evolvePalette(t) {
+  const base = t * 9 + Math.sin(t * 0.05) * 120;
+  const spread = 48 + Math.sin(t * 0.071) * 34 + Math.sin(t * 0.023) * 20;
+  for (let i = 0; i < NB; i++) {
+    const h = base + i * spread + Math.sin(t * 0.37 + i * 1.7) * 14;
+    const s = 0.72 + 0.22 * Math.sin(t * 0.11 + i);
+    const l = (i % 2 ? 0.6 : 0.46) + 0.06 * Math.sin(t * 0.17 + i * 2.3);
+    hsl(h, s, l, pal[i]);
+  }
 }
 
 function drawField(t) {
+  evolvePalette(t);
   const n = W * H;
-  const coreR = 0.035 + boost * 0.05 + Math.sin(t * 2) * 0.006;
+  const glow = 1 + boost * 0.6;
   for (let i = 0; i < n; i++) {
     const r = distA[i];
-    if (r < coreR) { buf[i] = VOID; continue; }
     const v = angA[i] * ARMS + logR[i] * TWIST - phase;
-    let band = Math.floor((v - Math.floor(v)) * NB + dith[i] * 0.55) % NB;
-    let shade = Math.floor(Math.min(r * 4.2, 1) * (NS - 1) * 0.85 + dith[i] * 0.9 + boost * 0.8);
-    if (shade > NS - 1) shade = NS - 1;
-    buf[i] = LUT[band * NS + shade];
+    const band = ((v - Math.floor(v)) * NB) | 0;
+    const c = pal[band];
+    let R = c[0], G = c[1], B = c[2];
+    if (r < BLUE_R) {
+      // stepped, dithered blend into the blue core
+      const q = 1 - r / BLUE_R;
+      const step = Math.min(4, Math.floor(Math.min(1, q * 1.7) * 4 + dith[i] * 0.999)) / 4;
+      const g2 = Math.min(1, q * q * glow);
+      const tint = band % 2 ? 1.12 : 0.9; // keep the swirl visible inside the blue
+      const k = g2 < 0.5 ? g2 * 2 : (g2 - 0.5) * 2;
+      const a = g2 < 0.5 ? DEEP : SKY, b = g2 < 0.5 ? SKY : MIST;
+      const bR = (a[0] + (b[0] - a[0]) * k) * tint, bG = (a[1] + (b[1] - a[1]) * k) * tint, bB = (a[2] + (b[2] - a[2]) * k) * tint;
+      R += (bR - R) * step; G += (bG - G) * step; B += (bB - B) * step;
+    }
+    buf[i] = (255 << 24) | (Math.min(255, B) << 16) | (Math.min(255, G) << 8) | Math.min(255, R);
   }
   for (const ring of rings) {
     const rr = ring.r, w = ring.w;
@@ -154,19 +185,21 @@ function frame(ms) {
   const dt = Math.min((ms - last) / 1000, 0.05);
   last = ms;
   const t = ms / 1000;
-  phase += dt * (0.22 + boost * 2.2);
+  phase += dt * (0.2 + boost * 1.8);
+  travel += dt * (1 + boost * 2.5);
   boost = Math.max(0, boost - dt * 0.55);
   rings = rings.filter((r) => (r.r += dt * (0.9 + r.r), r.w = 0.018 + r.r * 0.03, r.r < 1.3));
 
   drawField(t);
   ctx.imageSmoothingEnabled = false;
 
-  // Vortex icons, far (core) first
-  const placed = instances.map((it) => ({ it, ...instPos(it, t) })).filter((p) => p.rn > 0.06);
-  placed.sort((a, b) => a.rn - b.rn);
+  // Flying icons, far first so near ones draw on top
+  const placed = instances.map((it) => ({ it, ...instPos(it) }));
+  placed.sort((a, b) => b.z - a.z);
   for (const p of placed) {
-    const size = Math.max(4, Math.round(16 * (0.28 + p.rn * 0.95)));
-    ctx.globalAlpha = Math.min(1, (p.rn - 0.06) * 8);
+    const size = Math.round(ICON_SIZE * p.f * 0.9);
+    if (size < 3) continue;
+    ctx.globalAlpha = Math.min(1, (1 - p.z) / 0.12);
     ctx.drawImage(iconCanvas(p.it.icon), Math.round(p.x - size / 2), Math.round(p.y - size / 2), size, size);
   }
   ctx.globalAlpha = 1;
@@ -179,25 +212,27 @@ function frame(ms) {
     ctx.fillRect(Math.round(q.x), Math.round(q.y), q.s, q.s);
   }
 
-  // Hero icon: pops in big at the core, then shrinks into its spot in the vortex
+  // Hero icon: pops in big, then dives into the core and starts flying out at you
   if (hero) {
     const age = t - hero.start;
-    const big = Math.max(2, Math.floor(Math.min(W, H) * 0.42 / 16));
+    const big = ICON_SIZE * Math.max(2, Math.floor(Math.min(W, H) * 0.55 / ICON_SIZE));
+    let s;
     if (age < hero.hold) {
       const k = Math.min(age / 0.35, 1);
-      const elastic = 1 + Math.sin(k * Math.PI * 2.5) * (1 - k) * 0.6;
-      const wob = Math.sin(age * 9) * 1.5 * (age > 0.35 ? 1 : 0);
-      const s = Math.max(1, Math.round(big * 16 * k * elastic));
-      ctx.drawImage(iconCanvas(hero.icon), Math.round(cx - s / 2 + wob), Math.round(cy - s / 2), s, s);
+      s = big * k * (1 + Math.sin(k * Math.PI * 2.5) * (1 - k) * 0.6);
     } else {
-      const k = Math.min((age - hero.hold) / 0.55, 1);
-      const e = k * k * (3 - 2 * k);
-      const dest = instPos(hero.inst, t);
-      const dsize = 16 * (0.28 + dest.rn * 0.95);
-      const s = Math.round(big * 16 + (dsize - big * 16) * e);
-      const x = cx + (dest.x - cx) * e, y = cy + (dest.y - cy) * e;
-      ctx.drawImage(iconCanvas(hero.icon), Math.round(x - s / 2), Math.round(y - s / 2), s, s);
-      if (k >= 1) { instances.push(hero.inst); hero = null; }
+      const k = Math.min((age - hero.hold) / 0.45, 1);
+      s = big * (1 - k * k);
+      if (k >= 1) {
+        hero.inst.seed = (((-travel / FLY) % 1) + 1) % 1; // start at the core, right now
+        instances.push(hero.inst);
+        hero = null;
+      }
+    }
+    if (hero && s >= 1) {
+      const wob = age > 0.35 && age < hero.hold ? Math.sin(age * 9) * 1.5 : 0;
+      s = Math.round(s);
+      ctx.drawImage(iconCanvas(hero.icon), Math.round(cx - s / 2 + wob), Math.round(cy - s / 2), s, s);
     }
   }
   requestAnimationFrame(frame);
@@ -275,7 +310,7 @@ function celebrate(habit, s, newBest) {
     particles.push({
       x: cx, y: cy, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 40,
       life: 1 + Math.random() * 1.4, s: Math.random() < 0.25 ? 2 : 1,
-      col: RAINBOW[(Math.random() * NB) | 0],
+      col: RAINBOW[(Math.random() * RAINBOW.length) | 0],
     });
   }
   fanfare(s.combo, s.count);
@@ -294,9 +329,11 @@ function tap(habit, btn) {
   const newBest = s.combo > before.best && before.best > 0;
 
   const now = performance.now() / 1000;
-  // Land the new icon near the rim of the vortex
-  const inst = { icon: habit.icon, seed: ((0.08 - now / PERIOD) % 1 + 1) % 1, seed2: Math.random(), t: entry.t };
-  if (hero) instances.push(hero.inst); // a previous hero still mid-flight just joins immediately
+  const inst = { icon: habit.icon, seed: 0, seed2: Math.random(), t: entry.t };
+  if (hero) { // a previous hero still on screen launches from the core immediately
+    hero.inst.seed = (((-travel / FLY) % 1) + 1) % 1;
+    instances.push(hero.inst);
+  }
   hero = { icon: habit.icon, inst, start: now, hold: 1.5 };
 
   celebrate(habit, s, newBest);
@@ -337,7 +374,7 @@ function renderBar() {
     const b = document.createElement('button');
     b.className = 'habit' + (s.today ? ' done' : '');
     b.setAttribute('aria-label', `${habit.name}: ${s.count} taps, ${s.combo} day combo`);
-    b.append(iconEl(habit.icon, 3));
+    b.append(iconEl(habit.icon, 4));
     const badge = document.createElement('span');
     badge.className = 'badge';
     badge.textContent = s.combo > 0 ? s.combo : '';
@@ -370,6 +407,18 @@ function renderBar() {
 }
 
 // ---------- Settings ----------
+// Pixel gear for the settings button
+(() => {
+  const g = ['.....##.....', '..#.####.#..', '.##########.', '..###..###..', '.###....###.', '####....####',
+    '####....####', '.###....###.', '..###..###..', '.##########.', '..#.####.#..', '.....##.....'];
+  const c = document.createElement('canvas');
+  c.width = c.height = 12;
+  const gx = c.getContext('2d');
+  gx.fillStyle = '#fff';
+  g.forEach((row, y) => [...row].forEach((ch, x) => ch === '#' && gx.fillRect(x, y, 1, 1)));
+  document.getElementById('gear').append(c);
+})();
+
 const settingsEl = document.getElementById('settings');
 document.getElementById('gear').addEventListener('click', openSettings);
 settingsEl.querySelector('.close').addEventListener('click', () => (settingsEl.hidden = true));

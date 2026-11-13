@@ -502,26 +502,81 @@ const ICONS = {
   ]},
 };
 
-// Render an icon to an offscreen canvas at `scale` pixels per cell.
+// ---------- Hi-fi rendering ----------
+// The 16x16 sprites are upscaled to 32x32 with EPX (Scale2x), which rounds off
+// diagonals, then shaded: a 1px outline outside, softened inner lines, a lit
+// top-left rim and a shaded bottom-right rim.
+const ICON_SIZE = 32;
+
+function scale2x(rows) {
+  const h = rows.length, w = 16;
+  const at = (x, y) => (x < 0 || y < 0 || x >= w || y >= h ? '.' : rows[y][x] || '.');
+  const out = Array.from({ length: h * 2 }, () => new Array(w * 2));
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const P = at(x, y), A = at(x, y - 1), B = at(x + 1, y), C = at(x - 1, y), D = at(x, y + 1);
+      out[y * 2][x * 2] = C === A && C !== D && A !== B ? A : P;
+      out[y * 2][x * 2 + 1] = A === B && A !== C && B !== D ? B : P;
+      out[y * 2 + 1][x * 2] = D === C && D !== B && C !== A ? C : P;
+      out[y * 2 + 1][x * 2 + 1] = B === D && B !== A && D !== C ? D : P;
+    }
+  }
+  return out;
+}
+
+const _rgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+const _mul = (c, k) => c.map((v) => Math.round(v * k));
+const _lift = (c, k) => c.map((v) => Math.round(v + (255 - v) * k));
+const OUTLINE = [22, 12, 30];
+
+function iconPixels(name) {
+  const g = scale2x((ICONS[name] || ICONS.parsnip).grid);
+  const n = ICON_SIZE;
+  const ch = (x, y) => (x < 0 || y < 0 || x >= n || y >= n ? '.' : g[y][x]);
+  const empty = (x, y) => ch(x, y) === '.';
+  const edge = (x, y) => { const c = ch(x, y); return c === '.' || c === 'k'; };
+  const px = new Uint8ClampedArray(n * n * 4);
+  for (let y = 0; y < n; y++) {
+    for (let x = 0; x < n; x++) {
+      const c = ch(x, y);
+      if (c === '.') continue;
+      let col;
+      if (c === 'k') {
+        if (empty(x - 1, y) || empty(x + 1, y) || empty(x, y - 1) || empty(x, y + 1)) col = OUTLINE;
+        else {
+          // inner side of a doubled outline / interior line: a deep shade of the neighbouring fill
+          const nb = [ch(x, y + 1), ch(x + 1, y), ch(x - 1, y), ch(x, y - 1)].find((k) => PALETTE[k] && k !== 'k');
+          col = nb ? _mul(_rgb(PALETTE[nb]), 0.5) : OUTLINE;
+        }
+      } else {
+        const base = _rgb(PALETTE[c]);
+        const ul = edge(x - 1, y) || edge(x, y - 1) || edge(x - 1, y - 1);
+        const dr = edge(x + 1, y) || edge(x, y + 1) || edge(x + 1, y + 1);
+        col = ul && !dr ? _lift(base, 0.28) : dr && !ul ? _mul(base, 0.74) : base;
+      }
+      const i = (y * n + x) * 4;
+      px[i] = col[0]; px[i + 1] = col[1]; px[i + 2] = col[2]; px[i + 3] = 255;
+    }
+  }
+  return px;
+}
+
+// Render an icon to an offscreen canvas at `scale` canvas pixels per hi-fi pixel.
 const _iconCache = new Map();
 function iconCanvas(name, scale = 1) {
   const key = name + '@' + scale;
   if (_iconCache.has(key)) return _iconCache.get(key);
-  const icon = ICONS[name] || ICONS.parsnip;
-  const rows = icon.grid;
-  const h = rows.length;
-  const w = Math.max(...rows.map((r) => r.length));
-  const c = document.createElement('canvas');
-  c.width = w * scale;
-  c.height = h * scale;
-  const ctx = c.getContext('2d');
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const col = PALETTE[rows[y][x]];
-      if (!col) continue;
-      ctx.fillStyle = col;
-      ctx.fillRect(x * scale, y * scale, scale, scale);
-    }
+  const n = ICON_SIZE;
+  const base = document.createElement('canvas');
+  base.width = base.height = n;
+  base.getContext('2d').putImageData(new ImageData(iconPixels(name), n, n), 0, 0);
+  let c = base;
+  if (scale !== 1) {
+    c = document.createElement('canvas');
+    c.width = c.height = n * scale;
+    const ctx = c.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(base, 0, 0, n * scale, n * scale);
   }
   _iconCache.set(key, c);
   return c;
