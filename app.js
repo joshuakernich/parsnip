@@ -588,7 +588,7 @@ function openEditor(habit) {
   editing = habit;
   chosenIcon = habit ? habit.icon : 'star';
   nameInput.value = habit ? habit.name : '';
-  document.getElementById('editor-title').textContent = habit ? 'EDIT HABIT' : 'NEW HABIT';
+  document.getElementById('habit-save').textContent = habit ? 'SAVE CHANGES' : 'CREATE NEW HABIT';
   document.getElementById('habit-delete').hidden = !habit;
   grid.innerHTML = '';
   for (const [key, icon] of Object.entries(ICONS)) {
@@ -607,7 +607,7 @@ function openEditor(habit) {
   editorEl.hidden = false;
 }
 
-document.getElementById('habit-cancel').addEventListener('click', () => (editorEl.hidden = true));
+document.getElementById('editor-close').addEventListener('click', () => (editorEl.hidden = true));
 editorEl.addEventListener('click', (e) => { if (e.target === editorEl) editorEl.hidden = true; });
 
 document.getElementById('habit-save').addEventListener('click', () => {

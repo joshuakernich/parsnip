@@ -268,12 +268,25 @@ a.pixbtn { text-decoration: none; color: var(--ink); }
 .toggle {font-family: system-ui, sans-serif; font-size: 14px; display: flex; gap: 8px; align-items: center; }
 .toggle input { width: 20px; height: 20px; accent-color: var(--go); }
 
-.field { display: block; font-size: 10px; margin-bottom: 14px; }
-.field input {
-  display: block; width: 100%; margin-top: 8px;
-  font: 14px var(--font); color: var(--ink);
-  background: #0f0820; border: 0; padding: 10px;
+#editor .panel { position: relative; padding-bottom: 0; }
+/* name + create button stay pinned to the bottom while the icons scroll */
+.editor-foot {
+  position: sticky; bottom: 0;
+  margin: 0 -16px; padding: 4px 16px calc(var(--safe-b) + 16px);
+  background: var(--panel);
 }
+.sheet-x {
+  position: absolute; top: 6px; right: 8px;
+  background: none; border: 0; padding: 6px 10px; cursor: pointer;
+  font: 26px/1 system-ui, sans-serif; color: var(--ink-dim);
+}
+#editor #icon-grid { margin-top: 30px; }
+.name-input {
+  display: block; width: 100%; margin-top: 12px;
+  font: 14px var(--font); color: var(--ink);
+  background: #0f0820; border: 0; padding: 12px;
+}
+.name-input::placeholder { color: #6c5a8e; }
 
 #icon-grid {
   display: grid;

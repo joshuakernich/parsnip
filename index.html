@@ -87,13 +87,14 @@
   <!-- Habit editor sheet -->
   <div id="editor" class="sheet" hidden>
     <div class="panel">
-      <h2 id="editor-title">HABIT</h2>
-      <label class="field">Name<input id="habit-name" maxlength="20" autocomplete="off"></label>
+      <button id="editor-close" class="sheet-x" aria-label="Close">×</button>
       <div id="icon-grid" role="listbox" aria-label="Icon"></div>
-      <div class="row">
-        <button id="habit-delete" class="pixbtn danger">DELETE</button>
-        <button id="habit-cancel" class="pixbtn">CANCEL</button>
-        <button id="habit-save" class="pixbtn go">SAVE</button>
+      <div class="editor-foot">
+        <input id="habit-name" class="name-input" maxlength="20" autocomplete="off" placeholder="Habit name" aria-label="Habit name">
+        <div class="row">
+          <button id="habit-delete" class="pixbtn danger">DELETE</button>
+          <button id="habit-save" class="pixbtn go">CREATE NEW HABIT</button>
+        </div>
       </div>
     </div>
   </div>
