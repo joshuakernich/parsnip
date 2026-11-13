@@ -206,37 +206,80 @@ const vortex = {
 };
 
 // ----- Landscape: a psychedelic valley with a growing pile of icons -----
-// Pile slots on a hex lattice, ordered so each slot rests on two below it.
-const MOUND = (() => {
-  const cells = [];
-  for (let y = 0; y < 40; y++) {
-    for (let x = -40; x <= 40; x++) {
-      const px = x + (y % 2) * 0.5;
-      cells.push({ x: px, y, s: y + Math.abs(px) * 1.15 + hash(x * 31 + y * 7) * 0.01 });
-    }
-  }
-  return cells.sort((a, b) => a.s - b.s);
-})();
+// The pile is simulated: each icon drops near the middle, lands on whatever is
+// below it, and rolls downhill until it settles in a gap or reaches the ground.
+// Positions are in "units" (an icon is about 1 unit across) with y up from the ground.
 let ridgeFar = new Float32Array(0), ridgeNear = new Float32Array(0);
 const landscape = {
-  items: [], unit: 40, unitTarget: 40,
+  items: [], discs: [], cols: new Map(), unit: 40, unitTarget: 40,
   center: () => ({ x: cx, y: H * 0.34 }),
   ground: () => H * 0.8,
-  build(items) { this.items = items.slice(-900); this.fit(true); },
-  add(it) { this.items.push(it); this.fit(); },
-  remove(t) { this.items = this.items.filter((i) => i.t !== t); this.fit(); },
-  // icon size that keeps the whole mound (plus the next slot) on screen
+  build(items) {
+    this.items = []; this.discs = []; this.cols = new Map();
+    for (const it of items.slice(-900)) this.add(it, true);
+    this.fit(true);
+  },
+  add(it, quiet) {
+    const d = it._spot || this.place(it);
+    this.items.push(it); this.discs.push(d);
+    for (let c = Math.floor(d.x - d.r); c <= Math.floor(d.x + d.r); c++) {
+      if (!this.cols.has(c)) this.cols.set(c, []);
+      this.cols.get(c).push(d);
+    }
+    if (!quiet) this.fit();
+  },
+  remove(t) {
+    const i = this.items.findIndex((x) => x.t === t);
+    if (i < 0) return;
+    const keep = this.items.filter((_, j) => j !== i);
+    this.build(keep);
+  },
+  // highest resting height for a disc of radius r centred at x
+  restAt(x, r) {
+    let y = r, on = null;
+    for (let c = Math.floor(x - r - 0.6); c <= Math.floor(x + r + 0.6); c++) {
+      for (const d of this.cols.get(c) || []) {
+        const dx = d.x - x, rr = d.r + r;
+        if (Math.abs(dx) >= rr) continue;
+        const yc = d.y + Math.sqrt(rr * rr - dx * dx);
+        if (yc > y) { y = yc; on = d; }
+      }
+    }
+    return { y, on };
+  },
+  place(it) {
+    const r = 0.42 + it.seed2 * 0.12;
+    // drop point: clustered around the middle (sum of uniforms ≈ bell curve)
+    let x = (it.seed + hash(it.seed * 91.7) + hash(it.seed * 13.1) - 1.5) * 2.3;
+    let { y, on } = this.restAt(x, r);
+    // a little momentum lets it hop over small bumps before settling
+    let dir = 0, climb = 0.04 + hash(it.seed * 3.3) * 0.1;
+    for (let i = 0; i < 900 && on; i++) {
+      const lean = Math.sign(x - on.x) || (it.seed2 > 0.5 ? 1 : -1);
+      if (!dir) dir = lean;
+      const n = this.restAt(x + dir * 0.025, r);
+      if (n.y > y + 1e-4) {             // uphill: spend momentum, or settle
+        climb -= n.y - y;
+        if (climb < 0) break;
+      }
+      x += dir * 0.025; y = n.y; on = n.on;
+    }
+    return { x, y, r, rot: (hash(it.seed * 7.7) - 0.5) * 1.1 };
+  },
+  // zoom so the whole pile (plus room on top) fits on screen
   fit(snap) {
-    let mx = 0, my = 0;
-    for (let i = 0; i <= this.items.length; i++) { mx = Math.max(mx, Math.abs(MOUND[i].x)); my = Math.max(my, MOUND[i].y); }
-    this.unitTarget = Math.min(ICON_SIZE * 1.5, (W * 0.92) / (2 * mx + 1), (this.ground() - H * 0.24) / ((my + 1) * 0.87));
+    let minX = -1.5, maxX = 1.5, maxY = 1.5;
+    for (const d of this.discs) { minX = Math.min(minX, d.x - d.r); maxX = Math.max(maxX, d.x + d.r); maxY = Math.max(maxY, d.y + d.r); }
+    const halfW = Math.max(-minX, maxX) + 0.5;
+    this.unitTarget = Math.min(ICON_SIZE * 1.5, (W * 0.46) / halfW, (this.ground() - H * 0.24) / (maxY + 1));
     if (snap) this.unit = this.unitTarget;
   },
-  slot(i) {
-    const c = MOUND[i], u = this.unit;
-    return { x: cx + c.x * u, y: this.ground() - c.y * u * 0.87 - u * 0.5, size: u * 1.12 };
+  toScreen(d) { return { x: cx + d.x * this.unit, y: this.ground() - d.y * this.unit }; },
+  landing(it) {
+    if (!it) return { x: cx, y: this.ground(), size: this.unit };
+    it._spot = it._spot || this.place(it);
+    return { ...this.toScreen(it._spot), size: it._spot.r * 2 * this.unit * 1.2 };
   },
-  landing() { return this.slot(this.items.length); },
   update(dt) { this.unit += (this.unitTarget - this.unit) * Math.min(1, dt * 3); },
   background(t) {
     const [dk, lt, ac] = tri;
@@ -287,43 +330,73 @@ const landscape = {
   },
   draw(t) {
     this.items.forEach((it, i) => {
-      const p = this.slot(i);
+      const d = this.discs[i], p = this.toScreen(d);
       const bob = Math.sin(t * 5 + it.seed * 9) * boost * 1.5;
-      drawSprite(it.icon, p.x, p.y + bob, p.size, (it.seed - 0.5) * 0.6);
+      drawSprite(it.icon, p.x, p.y + bob, d.r * 2 * this.unit * 1.2, d.rot);
     });
   },
 };
 
 // ----- Snake: a self-playing snake that grows by one icon per tap -----
 const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+// A loop visiting every cell of a c x r grid once (r must be even): snake
+// right and left across columns 1..c-1, then return up column 0.
+function loopCells(c, r) {
+  const out = [];
+  for (let y = 0; y < r; y++) {
+    if (y % 2 === 0) for (let x = 1; x < c; x++) out.push({ x, y });
+    else for (let x = c - 1; x >= 1; x--) out.push({ x, y });
+  }
+  for (let y = r - 1; y >= 0; y--) out.push({ x: 0, y });
+  return out;
+}
 const snake = {
-  items: [], body: [], prev: [], food: null, cs: 16, cols: 1, rows: 1, ox: 0, oy: 0, acc: 0, tick: 0.13,
+  items: [], body: [], prev: [], pending: 0, food: null, cycle: [], ord: null, cs: 16, cols: 1, rows: 1, ox: 0, oy: 0, acc: 0, tick: 0.13,
   center: () => ({ x: cx, y: H * 0.4 }),
   build(items) { this.items = items.slice(-400); this.layout(); },
   add(it) {
     this.items.push(it);
     if (this.cols * this.rows < this.items.length * 2.5) return this.layout();
-    const tail = this.body[this.body.length - 1] || this.mid();
-    this.body.push({ ...tail }); this.prev.push({ ...tail });
+    this.pending++;
+    this.grow();
   },
   remove(t) {
     const i = this.items.findIndex((x) => x.t === t);
     if (i < 0) return;
-    this.items.splice(i, 1); this.body.pop(); this.prev.pop();
+    this.items.splice(i, 1);
+    if (this.pending) this.pending--; else { this.body.pop(); this.prev.pop(); }
+  },
+  // Lengthen the tail backwards along the cycle, into the free cell just behind
+  // it; if there's no free cell right now, the growth waits for one.
+  grow() {
+    const N = this.cycle.length, ord = (c) => this.ord[c.y * this.cols + c.x];
+    while (this.pending > 0) {
+      if (!this.body.length) { const m = this.mid(); this.body.push(m); this.prev.push({ ...m }); this.pending--; continue; }
+      const head = this.body[0], tail = this.body[this.body.length - 1];
+      const room = this.body.length === 1 ? N : (ord(tail) - ord(head) + N) % N;
+      if (room < 2) return;
+      const c = this.cycle[(ord(tail) - 1 + N) % N];
+      this.body.push({ ...c }); this.prev.push({ ...c });
+      this.pending--;
+    }
   },
   mid() { return { x: this.cols >> 1, y: this.rows >> 1 }; },
-  // pick a cell size that leaves plenty of room, then coil the snake in a serpentine
+  // Pick a cell size that leaves plenty of room, build a loop through every
+  // cell (a Hamiltonian cycle), and coil the snake along it.
   layout() {
     const top = 34, bottom = H - 72, areaH = bottom - top, n = this.items.length;
     let cs = 22;
     while (cs > 7 && Math.floor(W / cs) * Math.floor(areaH / cs) < n * 2.5) cs--;
     this.cs = cs; this.cols = Math.floor(W / cs); this.rows = Math.floor(areaH / cs);
+    if (this.cols % 2 && this.rows % 2) this.rows--; // a cycle needs an even side
     this.ox = Math.floor((W - this.cols * cs) / 2); this.oy = top + Math.floor((areaH - this.rows * cs) / 2);
-    const path = [];
-    for (let y = this.rows - 1; y >= 0; y--) for (let k = 0; k < this.cols; k++) path.push({ x: (this.rows - 1 - y) % 2 ? this.cols - 1 - k : k, y });
+    this.cycle = this.rows % 2 === 0 ? loopCells(this.cols, this.rows) : loopCells(this.rows, this.cols).map(({ x, y }) => ({ x: y, y: x }));
+    this.ord = new Int32Array(this.cols * this.rows);
+    this.cycle.forEach((c, i) => { this.ord[c.y * this.cols + c.x] = i; });
     this.body = [];
-    for (let i = 0; i < n; i++) this.body.push({ ...path[Math.min(path.length - 1, n - 1 - i)] });
+    for (let i = 0; i < n; i++) this.body.push({ ...this.cycle[Math.min(this.cycle.length - 1, n - 1 - i)] });
     this.prev = this.body.map((c) => ({ ...c }));
+    this.pending = 0;
     this.placeFood();
   },
   placeFood() {
@@ -335,41 +408,34 @@ const snake = {
     this.food = this.mid();
   },
   inBounds(x, y) { return x >= 0 && y >= 0 && x < this.cols && y < this.rows; },
+  // Never collides: every body cell lies on the cycle between the tail and the
+  // head, so the cells ahead of the head (up to the tail) are always free. The
+  // snake moves forward along the cycle and only shortcuts into that free stretch,
+  // jumping as far as it can toward the food without overshooting it.
   step() {
-    if (!this.body.length) return;
-    const head = this.body[0], key = (x, y) => x + ',' + y;
-    const occ = new Set(this.body.slice(0, -1).map((c) => key(c.x, c.y))); // the tail moves away
-    // breadth-first search to the food
-    const from = new Map([[key(head.x, head.y), null]]), queue = [head];
-    let found = null;
-    while (queue.length && !found) {
-      const c = queue.shift();
-      for (const [dx, dy] of DIRS) {
-        const x = c.x + dx, y = c.y + dy, k = key(x, y);
-        if (!this.inBounds(x, y) || occ.has(k) || from.has(k)) continue;
-        from.set(k, c);
-        if (x === this.food.x && y === this.food.y) { found = { x, y }; break; }
-        queue.push({ x, y });
-      }
+    const len = this.body.length;
+    if (!len) return;
+    const N = this.cycle.length, ord = (c) => this.ord[c.y * this.cols + c.x];
+    const fwd = (a, b) => (b - a + N) % N;
+    const head = this.body[0], tail = this.body[len - 1], h = ord(head);
+    const room = len === 1 ? N : fwd(h, ord(tail)); // how far ahead the tail is (its cell frees up as we move)
+    // Shortcuts keep a few cells of slack so there's always room to grow; the
+    // plain next step along the cycle (d = 1) is always safe.
+    const cap = Math.max(1, room - 4);
+    const toFood = fwd(h, ord(this.food));
+    const limit = toFood > 0 && toFood <= cap ? toFood : cap;
+    let next = null, best = 0;
+    for (const [dx, dy] of DIRS) {
+      const x = head.x + dx, y = head.y + dy;
+      if (!this.inBounds(x, y)) continue;
+      const d = fwd(h, this.ord[y * this.cols + x]);
+      if (d >= 1 && d <= limit && d > best) { best = d; next = { x, y }; }
     }
-    let next = null;
-    if (found) {
-      next = found;
-      for (let c = from.get(key(next.x, next.y)); c && c !== head; c = from.get(key(c.x, c.y))) next = c;
-    } else {
-      // no route: take the open neighbour with the most room around it, or any move at all
-      let best = -1;
-      for (const [dx, dy] of DIRS) {
-        const x = head.x + dx, y = head.y + dy;
-        if (!this.inBounds(x, y)) continue;
-        const room = occ.has(key(x, y)) ? -0.5 : DIRS.filter(([ex, ey]) => this.inBounds(x + ex, y + ey) && !occ.has(key(x + ex, y + ey))).length;
-        if (room > best) { best = room; next = { x, y }; }
-      }
-    }
-    if (!next) return;
+    if (!next) return; // can't happen: the next cell along the cycle is always free
     this.prev = this.body.map((c) => ({ ...c }));
-    this.body.unshift({ x: next.x, y: next.y });
+    this.body.unshift(next);
     this.body.pop();
+    if (this.pending) this.grow();
     if (next.x === this.food.x && next.y === this.food.y) this.placeFood();
   },
   update(dt) {
@@ -504,7 +570,7 @@ function frame(ms) {
       if (age > 0.35) x += Math.sin(age * 9) * 1.5;
     } else {
       const k = Math.min((age - hero.hold) / 0.5, 1), e = k * k * (3 - 2 * k);
-      const to = MODE.landing();
+      const to = MODE.landing(hero.inst);
       x += (to.x - x) * e; y += (to.y - y) * e; s = big + (to.size - big) * e;
       if (k >= 1) { MODE.add(hero.inst); hero = null; }
     }
