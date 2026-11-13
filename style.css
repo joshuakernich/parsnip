@@ -30,16 +30,19 @@ html, body {
   overscroll-behavior: none;
 }
 
-#vortex {
+#stage, #vortex, #sprites {
   position: fixed;
   inset: 0;
   width: 100vw;
   height: 100vh;
   height: 100dvh;
+}
+/* The vortex is chunky pixels; the icons flying through it are drawn smooth at full resolution */
+#vortex {
   image-rendering: pixelated;
   image-rendering: crisp-edges;
 }
-#vortex.shake { animation: shake 0.45s steps(9); }
+#stage.shake { animation: shake 0.45s steps(9); }
 @keyframes shake {
   0%, 100% { transform: translate(0, 0); }
   20% { transform: translate(-6px, 3px); }

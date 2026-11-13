@@ -58,6 +58,10 @@ function statsFor(hid, log = state.log) {
 // ---------- Vortex renderer ----------
 const canvas = document.getElementById('vortex');
 const ctx = canvas.getContext('2d');
+const stage = document.getElementById('stage');
+const sprites = document.getElementById('sprites');
+const sctx = sprites.getContext('2d');
+let SX = 1; // sprite canvas pixels per vortex pixel
 
 // Confetti colours
 const RAINBOW = ['#ff2a4d', '#ff6a1f', '#ffb21f', '#ffe83a', '#9cf23a', '#2ee06a',
@@ -79,6 +83,9 @@ function resize() {
   H = Math.ceil(innerHeight / PX);
   canvas.width = W;
   canvas.height = H;
+  SX = PX * Math.min(devicePixelRatio || 1, 3);
+  sprites.width = Math.round(W * SX);
+  sprites.height = Math.round(H * SX);
   cx = W / 2;
   cy = H * 0.56;
   maxR = Math.hypot(Math.max(cx, W - cx), Math.max(cy, H - cy));
@@ -191,18 +198,22 @@ function frame(ms) {
   rings = rings.filter((r) => (r.r += dt * (0.9 + r.r), r.w = 0.018 + r.r * 0.03, r.r < 1.3));
 
   drawField(t);
-  ctx.imageSmoothingEnabled = false;
+  sctx.setTransform(1, 0, 0, 1, 0, 0);
+  sctx.clearRect(0, 0, sprites.width, sprites.height);
+  sctx.setTransform(SX, 0, 0, SX, 0, 0); // draw in vortex-pixel units
+  sctx.imageSmoothingEnabled = true;
+  sctx.imageSmoothingQuality = 'high';
 
   // Flying icons, far first so near ones draw on top
   const placed = instances.map((it) => ({ it, ...instPos(it) }));
   placed.sort((a, b) => b.z - a.z);
   for (const p of placed) {
-    const size = Math.round(ICON_SIZE * p.f * 0.9);
-    if (size < 3) continue;
-    ctx.globalAlpha = Math.min(1, (1 - p.z) / 0.12);
-    ctx.drawImage(iconCanvas(p.it.icon), Math.round(p.x - size / 2), Math.round(p.y - size / 2), size, size);
+    const size = ICON_SIZE * p.f * 0.9;
+    if (size < 2) continue;
+    sctx.globalAlpha = Math.min(1, (1 - p.z) / 0.12);
+    sctx.drawImage(iconCanvas(p.it.icon, 4), p.x - size / 2, p.y - size / 2, size, size);
   }
-  ctx.globalAlpha = 1;
+  sctx.globalAlpha = 1;
 
   // Confetti
   particles = particles.filter((q) => (q.life -= dt) > 0);
@@ -231,8 +242,7 @@ function frame(ms) {
     }
     if (hero && s >= 1) {
       const wob = age > 0.35 && age < hero.hold ? Math.sin(age * 9) * 1.5 : 0;
-      s = Math.round(s);
-      ctx.drawImage(iconCanvas(hero.icon), Math.round(cx - s / 2 + wob), Math.round(cy - s / 2), s, s);
+      sctx.drawImage(iconCanvas(hero.icon, 4), cx - s / 2 + wob, cy - s / 2, s, s);
     }
   }
   requestAnimationFrame(frame);
@@ -297,9 +307,9 @@ function celebrate(habit, s, newBest) {
   clearTimeout(celebrateTimer);
   celebrateTimer = setTimeout(() => celebrateEl.classList.remove('show', 'hot'), 2700);
 
-  canvas.classList.remove('shake');
-  void canvas.offsetWidth;
-  canvas.classList.add('shake');
+  stage.classList.remove('shake');
+  void stage.offsetWidth;
+  stage.classList.add('shake');
 
   boost = Math.min(1.6, boost + 1 + Math.min(s.combo, 30) / 30);
   rings.push({ r: 0.02, w: 0.02 });
