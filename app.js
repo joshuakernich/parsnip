@@ -78,8 +78,8 @@ let img, buf, angA, logR, distA, dith;
 
 function resize() {
   PX = Math.max(2, Math.round(Math.max(innerWidth, innerHeight) / 520));
-  W = Math.ceil(innerWidth / PX);
-  H = Math.ceil(innerHeight / PX);
+  W = Math.max(1, Math.ceil(innerWidth / PX)); // never zero, even in a hidden or collapsed view
+  H = Math.max(1, Math.ceil(innerHeight / PX));
   canvas.width = W;
   canvas.height = H;
   SX = PX * Math.min(devicePixelRatio || 1, 3);
@@ -451,17 +451,31 @@ function loopCells(c, r) {
   for (let y = r - 1; y >= 0; y--) out.push({ x: 0, y });
   return out;
 }
+// A newly tapped icon lands on the pellet and becomes it; the snake grows by
+// that icon when it eats it.
 const snake = {
-  items: [], body: [], prev: [], pending: 0, food: null, cycle: [], ord: null, cs: 16, cols: 1, rows: 1, ox: 0, oy: 0, acc: 0, tick: 0.13,
+  items: [], body: [], prev: [], pending: 0, food: null, foodItem: null, cycle: [], ord: null,
+  cs: 16, csx: 16, csy: 16, cols: 1, rows: 1, acc: 0, tick: 0.13,
   center: () => ({ x: cx, y: H * 0.4 }),
-  build(items) { this.items = items.slice(-400); this.layout(); },
+  build(items) { this.items = items.slice(-400); this.foodItem = null; this.layout(); },
   add(it) {
-    this.items.push(it);
+    if (this.foodItem) this.eat(); // a pellet nobody reached yet gets swallowed now
+    if (!this.body.length) {       // no snake yet: this icon becomes its head
+      this.items.push(it);
+      this.body = [{ ...this.food }]; this.prev = [{ ...this.food }];
+      return this.placeFood();
+    }
+    this.foodItem = it;
+  },
+  eat() {
+    this.items.push(this.foodItem);
+    this.foodItem = null;
     if (this.cols * this.rows < this.items.length * 2.5) return this.layout();
     this.pending++;
     this.grow();
   },
   remove(t) {
+    if (this.foodItem && this.foodItem.t === t) { this.foodItem = null; return; }
     const i = this.items.findIndex((x) => x.t === t);
     if (i < 0) return;
     this.items.splice(i, 1);
@@ -482,15 +496,16 @@ const snake = {
     }
   },
   mid() { return { x: this.cols >> 1, y: this.rows >> 1 }; },
-  // Pick a cell size that leaves plenty of room, build a loop through every
-  // cell (a Hamiltonian cycle), and coil the snake along it.
+  // Pick a cell size that leaves plenty of room, stretch the grid over the whole
+  // screen, build a loop through every cell (a Hamiltonian cycle), and coil the
+  // snake along it.
   layout() {
-    const top = 34, bottom = H - 72, areaH = bottom - top, n = this.items.length;
-    let cs = 22;
-    while (cs > 7 && Math.floor(W / cs) * Math.floor(areaH / cs) < n * 2.5) cs--;
-    this.cs = cs; this.cols = Math.floor(W / cs); this.rows = Math.floor(areaH / cs);
-    if (this.cols % 2 && this.rows % 2) this.rows--; // a cycle needs an even side
-    this.ox = Math.floor((W - this.cols * cs) / 2); this.oy = top + Math.floor((areaH - this.rows * cs) / 2);
+    const n = this.items.length;
+    let target = 22;
+    while (target > 7 && Math.round(W / target) * Math.round(H / target) < n * 2.5) target--;
+    this.cols = Math.max(2, Math.round(W / target)); this.rows = Math.max(2, Math.round(H / target));
+    if (this.cols % 2 && this.rows % 2) this.rows++; // a cycle needs an even side
+    this.csx = W / this.cols; this.csy = H / this.rows; this.cs = Math.min(this.csx, this.csy);
     this.cycle = this.rows % 2 === 0 ? loopCells(this.cols, this.rows) : loopCells(this.rows, this.cols).map(({ x, y }) => ({ x: y, y: x }));
     this.ord = new Int32Array(this.cols * this.rows);
     this.cycle.forEach((c, i) => { this.ord[c.y * this.cols + c.x] = i; });
@@ -500,10 +515,12 @@ const snake = {
     this.pending = 0;
     this.placeFood();
   },
+  // pellets go where you can see them: not under the habit bar or the settings cog
   placeFood() {
     const occ = new Set(this.body.map((c) => c.x + ',' + c.y));
+    const top = Math.ceil(40 / PX / this.csy), bottom = Math.floor((H - 130 / PX) / this.csy) - 1;
     for (let tries = 0; tries < 200; tries++) {
-      const f = { x: (Math.random() * this.cols) | 0, y: (Math.random() * this.rows) | 0 };
+      const f = { x: (Math.random() * this.cols) | 0, y: top + ((Math.random() * Math.max(1, bottom - top + 1)) | 0) };
       if (!occ.has(f.x + ',' + f.y)) { this.food = f; return; }
     }
     this.food = this.mid();
@@ -537,45 +554,47 @@ const snake = {
     this.body.unshift(next);
     this.body.pop();
     if (this.pending) this.grow();
-    if (next.x === this.food.x && next.y === this.food.y) this.placeFood();
+    if (next.x === this.food.x && next.y === this.food.y) {
+      if (this.foodItem) this.eat();
+      this.placeFood();
+    }
   },
   update(dt) {
     this.acc += dt * (1 + boost * 1.5);
     while (this.acc >= this.tick) { this.acc -= this.tick; this.step(); }
   },
-  cellXY(c) { return { x: this.ox + (c.x + 0.5) * this.cs, y: this.oy + (c.y + 0.5) * this.cs }; },
+  cellXY(c) { return { x: (c.x + 0.5) * this.csx, y: (c.y + 0.5) * this.csy }; },
   segPos(i) {
     const f = this.acc / this.tick, a = this.cellXY(this.prev[i] || this.body[i]), b = this.cellXY(this.body[i]);
     return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f };
   },
-  landing() {
-    const i = this.body.length - 1;
-    return { ...(i < 0 ? this.cellXY(this.mid()) : this.segPos(i)), size: this.cs * 1.05 };
-  },
+  landing() { return { ...this.cellXY(this.food || this.mid()), size: this.cs * 1.2 }; }, // onto the pellet
   background(t) {
     const [dk, lt, ac] = tri;
-    const out = rgb32(mix(dk, [0, 0, 0], 0.35)), a = rgb32(dk), b = rgb32(mix(dk, lt, 0.08));
+    const a = rgb32(dk), b = rgb32(mix(dk, lt, 0.08));
     const food = rgb32(mix(ac, lt, (Math.sin(t * 8) + 1) * 0.25));
-    const { ox, oy, cs, cols, rows } = this;
-    const fx = this.food ? this.food.x : -1, fy = this.food ? this.food.y : -1, pad = Math.max(1, cs >> 2);
+    const { csx, csy, cols, rows } = this;
+    const showPellet = this.food && !this.foodItem;
+    const fx = showPellet ? this.food.x : -1, fy = showPellet ? this.food.y : -1, pad = Math.max(1, this.cs / 4);
     for (let y = 0; y < H; y++) {
-      const gy = Math.floor((y - oy) / cs), row = y * W;
+      const gy = Math.min(rows - 1, Math.floor(y / csy)), row = y * W;
       for (let x = 0; x < W; x++) {
-        const gx = Math.floor((x - ox) / cs);
-        let c = out;
-        if (gx >= 0 && gy >= 0 && gx < cols && gy < rows) {
-          c = (gx + gy) & 1 ? a : b;
-          if (gx === fx && gy === fy) {
-            const lx = x - ox - gx * cs, ly = y - oy - gy * cs;
-            if (lx >= pad && ly >= pad && lx < cs - pad && ly < cs - pad) c = food;
-          }
+        const gx = Math.min(cols - 1, Math.floor(x / csx));
+        let c = (gx + gy) & 1 ? a : b;
+        if (gx === fx && gy === fy) {
+          const lx = x - gx * csx, ly = y - gy * csy;
+          if (lx >= pad && ly >= pad && lx < csx - pad && ly < csy - pad) c = food;
         }
         buf[row + x] = c;
       }
     }
     return distA;
   },
-  draw() {
+  draw(t) {
+    if (this.foodItem) { // the tapped icon, waiting to be eaten
+      const p = this.cellXY(this.food);
+      drawSprite(this.foodItem.icon, p.x, p.y, this.cs * (1.15 + Math.sin(t * 7) * 0.1));
+    }
     for (let i = this.body.length - 1; i >= 0; i--) { // tail first, head on top
       const p = this.segPos(i);
       drawSprite(this.items[i].icon, p.x, p.y, this.cs * (i === 0 ? 1.35 : 1.05));
